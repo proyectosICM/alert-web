@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, Settings } from "lucide-react";
+import { LayoutDashboard, Bell, Users, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -14,40 +14,72 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/alerts", label: "Alertas", icon: Bell },
+  { href: "/app/groups", label: "Grupos", icon: Users },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
 
-  return (
-    <aside className="hidden w-60 border-r border-slate-800 bg-slate-950 md:flex md:flex-col">
-      <div className="flex h-14 items-center border-b border-slate-800 px-4">
-        <span className="text-lg font-semibold tracking-tight">core-react-next</span>
-      </div>
+  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
-      <nav className="flex-1 space-y-1 px-2 py-4">
+  return (
+    <>
+      {/* Sidebar DESKTOP */}
+      <aside className="hidden w-60 border-r border-slate-800 bg-slate-950 text-slate-50 md:flex md:flex-col">
+        <div className="flex h-14 items-center border-b border-slate-800 px-4">
+          <span className="text-lg font-semibold tracking-tight">Alerty</span>
+        </div>
+
+        <nav className="flex-1 space-y-1 px-2 py-4">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(item.href);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition",
+                  active
+                    ? "bg-slate-800 text-slate-50"
+                    : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+      </aside>
+
+      {/* Nav INFERIOR MÓVIL */}
+      <nav
+        aria-label="Navegación principal"
+        className="fixed inset-x-0 bottom-0 z-30 flex h-14 items-center justify-around border-t border-slate-800 bg-slate-950/95 text-[11px] text-slate-300 backdrop-blur md:hidden"
+      >
         {navItems.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = isActive(item.href);
 
           return (
             <Link
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition",
-                active
-                  ? "bg-slate-800 text-slate-50"
-                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+                "flex flex-1 flex-col items-center justify-center gap-0.5 transition-colors",
+                active ? "text-indigo-400" : "text-slate-400"
               )}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-5 w-5" />
               <span>{item.label}</span>
             </Link>
           );
         })}
       </nav>
-    </aside>
+    </>
   );
 }
