@@ -4,3 +4,11 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+export function stripHtml(value?: string | null): string {
+  if (!value) return "";
+  return value
+    .replace(/<[^>]*>/g, "") // quita cualquier <...>
+    .replace(/\s+/g, " ") // colapsa espacios múltiples
+    .trim();
+}
