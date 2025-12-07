@@ -15,7 +15,7 @@ import type {
   CreateAlertRequest,
   UpdateAlertRequest,
 } from "@/api/services/alertService";
-import type { PageResponse } from "@/api/services/notificationGroupService";
+import type { PageResponse } from "@/api/services/notificationGroupService"; // 👈 AQUÍ
 
 // ========== READ ONE ==========
 
@@ -26,6 +26,19 @@ export const useAlert = (id?: number) => {
     queryFn: () => alertService.getAlertById(id as number),
   });
 };
+
+// ========== CONFIG LISTADOS “VIVOS” ==========
+
+const LIVE_LIST_QUERY_OPTIONS = {
+  // Siempre considerar los datos como stale para que el polling tenga sentido
+  staleTime: 0,
+  // Mantener cache un rato razonable (5 min) antes de limpiarla
+  gcTime: 5 * 60 * 1000,
+  // Polling cada 2 segundos
+  refetchInterval: 2000,
+  // Seguir haciendo polling aunque la pestaña esté en segundo plano
+  refetchIntervalInBackground: true,
+} as const;
 
 // ========== LIST ALL (sin grupo) ==========
 
@@ -38,6 +51,7 @@ export const useAlerts = (params: { page?: number; size?: number }) => {
         size: params.size,
       }),
     placeholderData: keepPreviousData,
+    ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
 
@@ -60,6 +74,7 @@ export const useAlertsByGroup = (params: {
         size: params.size,
       }),
     placeholderData: keepPreviousData,
+    ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
 
@@ -86,6 +101,7 @@ export const useAlertsByGroupAndRange = (params: {
         size: params.size,
       }),
     placeholderData: keepPreviousData,
+    ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
 
@@ -94,10 +110,9 @@ export const useAlertsByGroupAndRange = (params: {
 export const useCreateAlert = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (payload: CreateAlertRequest) => alertService.createAlert(payload),
+  return useMutation<AlertDetail, Error, CreateAlertRequest>({
+    mutationFn: (payload) => alertService.createAlert(payload),
     onSuccess: () => {
-      // Por si tienes listados de alertas abiertos
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
     },
   });
@@ -108,9 +123,8 @@ export const useCreateAlert = () => {
 export const useUpdateAlert = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (args: { id: number; data: UpdateAlertRequest }) =>
-      alertService.updateAlert(args.id, args.data),
+  return useMutation<AlertDetail, Error, { id: number; data: UpdateAlertRequest }>({
+    mutationFn: (args) => alertService.updateAlert(args.id, args.data),
     onSuccess: (updatedAlert) => {
       queryClient.invalidateQueries({
         queryKey: ["alert", updatedAlert.id],
@@ -125,8 +139,8 @@ export const useUpdateAlert = () => {
 export const useDeleteAlert = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (id: number) => alertService.deleteAlert(id),
+  return useMutation<void, Error, number>({
+    mutationFn: (id) => alertService.deleteAlert(id),
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
@@ -134,21 +148,18 @@ export const useDeleteAlert = () => {
   });
 };
 
+// ========== ACKNOWLEDGE ==========
+
 export const useAcknowledgeAlert = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (id: number) => alertService.acknowledgeAlert(id),
+  return useMutation<AlertDetail, Error, number>({
+    mutationFn: (id) => alertService.acknowledgeAlert(id),
     onSuccess: (updatedAlert) => {
-      // Actualiza detalle
       queryClient.invalidateQueries({
         queryKey: ["alert", updatedAlert.id],
       });
-
-      // Actualiza listados generales
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
-
-      // Por si acaso tienes listados por grupo usando esta key base:
       queryClient.invalidateQueries({ queryKey: ["alerts", "group"] });
     },
   });

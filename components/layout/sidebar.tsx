@@ -29,7 +29,7 @@ export function Sidebar() {
       {/* Sidebar DESKTOP */}
       <aside className="hidden w-60 border-r border-slate-800 bg-slate-950 text-slate-50 md:flex md:flex-col">
         <div className="flex h-14 items-center border-b border-slate-800 px-4">
-          <span className="text-lg font-semibold tracking-tight">Alerty</span>
+          <span className="text-lg font-semibold tracking-tight">Alerts</span>
         </div>
 
         <nav className="flex-1 space-y-1 px-2 py-4">

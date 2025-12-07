@@ -1,3 +1,4 @@
+// src/api/services/userService.ts
 import api from "../apiClient";
 import type { PageResponse } from "@/api/services/notificationGroupService";
 
@@ -64,13 +65,31 @@ export const searchUsers = async (params: {
 };
 
 // ============== READ ONE ==============
+// Sobrecargas:
+// GET /api/users/{userId}
+export function getUserById(userId: number): Promise<GroupUserDetail>;
 // GET /api/users/{userId}?groupId=..
-export const getUserById = async (groupId: number, userId: number) => {
-  const response = await api.get<GroupUserDetail>(`${endpoint}/${userId}`, {
-    params: { groupId },
-  });
-  return response.data;
-};
+export function getUserById(groupId: number, userId: number): Promise<GroupUserDetail>;
+
+// Implementación común
+export async function getUserById(a: number, b?: number) {
+  if (typeof b === "number") {
+    // getUserById(groupId, userId)
+    const groupId = a;
+    const userId = b;
+
+    const response = await api.get<GroupUserDetail>(`${endpoint}/${userId}`, {
+      params: { groupId },
+    });
+    return response.data;
+  } else {
+    // getUserById(userId)
+    const userId = a;
+
+    const response = await api.get<GroupUserDetail>(`${endpoint}/${userId}`);
+    return response.data;
+  }
+}
 
 // ============== CREATE ==============
 // POST /api/users?groupId=..

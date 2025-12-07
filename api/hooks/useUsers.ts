@@ -1,3 +1,4 @@
+// src/api/hooks/useUsers.ts
 "use client";
 
 import {
@@ -15,6 +16,19 @@ import type {
   UpdateUserRequest,
 } from "@/api/services/userService";
 import type { PageResponse } from "@/api/services/notificationGroupService";
+
+// ========== CONFIG LISTADOS “VIVOS” ==========
+
+const LIVE_LIST_QUERY_OPTIONS = {
+  // Siempre considerar los datos como stale para que el polling tenga sentido
+  staleTime: 0,
+  // Mantener cache un rato razonable (5 min) antes de limpiarla
+  gcTime: 5 * 60 * 1000,
+  // Polling cada 2 segundos
+  refetchInterval: 2000,
+  // Seguir haciendo polling aunque la pestaña esté en segundo plano
+  refetchIntervalInBackground: true,
+} as const;
 
 // ============== LIST / SEARCH ==============
 
@@ -37,6 +51,7 @@ export const useUsers = (params: {
         }
       ),
     placeholderData: keepPreviousData,
+    ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
 
@@ -47,8 +62,11 @@ export const useUserById = (params: { groupId?: number; userId?: number }) => {
 
   return useQuery<GroupUserDetail, Error>({
     queryKey: ["group-user", params],
-    enabled: !!groupId && !!userId,
-    queryFn: () => userService.getUserById(groupId as number, userId as number),
+    enabled: !!userId, // solo requiere userId
+    queryFn: () =>
+      groupId != null
+        ? userService.getUserById(groupId, userId as number)
+        : userService.getUserById(userId as number),
   });
 };
 
@@ -57,9 +75,12 @@ export const useUserById = (params: { groupId?: number; userId?: number }) => {
 export const useCreateUser = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (args: { groupId: number; data: CreateUserRequest }) =>
-      userService.createUser(args.groupId, args.data),
+  return useMutation<
+    GroupUserDetail, // resultado
+    Error, // error
+    { groupId: number; data: CreateUserRequest } // variables
+  >({
+    mutationFn: (args) => userService.createUser(args.groupId, args.data),
     onSuccess: (_created, variables) => {
       // refresca listas de usuarios del grupo
       queryClient.invalidateQueries({
@@ -77,9 +98,12 @@ export const useCreateUser = () => {
 export const useUpdateUser = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (args: { groupId: number; userId: number; data: UpdateUserRequest }) =>
-      userService.updateUser(args.groupId, args.userId, args.data),
+  return useMutation<
+    GroupUserDetail,
+    Error,
+    { groupId: number; userId: number; data: UpdateUserRequest }
+  >({
+    mutationFn: (args) => userService.updateUser(args.groupId, args.userId, args.data),
     onSuccess: (_updated, variables) => {
       queryClient.invalidateQueries({ queryKey: ["group-users"] });
       queryClient.invalidateQueries({
@@ -100,9 +124,8 @@ export const useUpdateUser = () => {
 export const useDeleteUser = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (args: { groupId: number; userId: number }) =>
-      userService.deleteUser(args.groupId, args.userId),
+  return useMutation<void, Error, { groupId: number; userId: number }>({
+    mutationFn: (args) => userService.deleteUser(args.groupId, args.userId),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["group-users"] });
       queryClient.invalidateQueries({

@@ -17,6 +17,19 @@ import type {
   UpdateNotificationGroupRequest,
 } from "@/api/services/notificationGroupService";
 
+// ========== CONFIG LISTADOS “VIVOS” ==========
+
+const LIVE_LIST_QUERY_OPTIONS = {
+  // Siempre considerar los datos como stale para que el polling tenga sentido
+  staleTime: 0,
+  // Mantener cache un rato razonable (5 min) antes de limpiarla
+  gcTime: 5 * 60 * 1000,
+  // Polling cada 2 segundos
+  refetchInterval: 2000,
+  // Seguir haciendo polling aunque la pestaña esté en segundo plano
+  refetchIntervalInBackground: true,
+} as const;
+
 // ============== LIST / SEARCH ==============
 
 export const useNotificationGroups = (params: {
@@ -27,8 +40,8 @@ export const useNotificationGroups = (params: {
   return useQuery<PageResponse<NotificationGroupSummary>, Error>({
     queryKey: ["notification-groups", params],
     queryFn: () => notificationGroupService.searchNotificationGroups(params),
-    // v5: reemplazo de keepPreviousData
     placeholderData: keepPreviousData,
+    ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
 
@@ -47,9 +60,12 @@ export const useNotificationGroupById = (id?: number) => {
 export const useCreateNotificationGroup = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (payload: CreateNotificationGroupRequest) =>
-      notificationGroupService.createNotificationGroup(payload),
+  return useMutation<
+    NotificationGroupDetail, // resultado
+    Error, // error
+    CreateNotificationGroupRequest // variables
+  >({
+    mutationFn: (payload) => notificationGroupService.createNotificationGroup(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notification-groups"] });
     },
@@ -61,8 +77,12 @@ export const useCreateNotificationGroup = () => {
 export const useUpdateNotificationGroup = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (args: { id: number; data: UpdateNotificationGroupRequest }) =>
+  return useMutation<
+    NotificationGroupDetail,
+    Error,
+    { id: number; data: UpdateNotificationGroupRequest }
+  >({
+    mutationFn: (args) =>
       notificationGroupService.updateNotificationGroup(args.id, args.data),
     onSuccess: (updatedGroup) => {
       queryClient.invalidateQueries({ queryKey: ["notification-groups"] });
@@ -78,8 +98,8 @@ export const useUpdateNotificationGroup = () => {
 export const useDeleteNotificationGroup = () => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (id: number) => notificationGroupService.deleteNotificationGroup(id),
+  return useMutation<void, Error, number>({
+    mutationFn: (id) => notificationGroupService.deleteNotificationGroup(id),
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["notification-groups"] });
       queryClient.invalidateQueries({ queryKey: ["notification-group", id] });
