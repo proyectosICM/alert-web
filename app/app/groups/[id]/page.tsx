@@ -6,38 +6,36 @@ import {
   ArrowLeft,
   Users,
   Building2,
-  UserPlus,
   Shield,
   Plus,
   LayoutGrid,
   Rows,
-  Power,
   Trash2,
-  Pencil,
+  UserPlus,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import Swal from "sweetalert2";
+import { cn } from "@/lib/utils";
 
 import {
   useNotificationGroupById,
   useUpdateNotificationGroup,
 } from "@/api/hooks/useNotificationGroups";
-import {
-  useUsers,
-  useCreateUser,
-  useUpdateUser,
-  useDeleteUser,
-} from "@/api/hooks/useUsers";
-import type { Role } from "@/api/services/userService";
+import { useGroupUsers, useRemoveUserFromGroup } from "@/api/hooks/useGroupUsers";
+import type { Role, GroupUserSummary } from "@/api/services/userService";
+import { getAuthDataWeb } from "@/api/webAuthStorage";
 
-type ViewUser = {
+import { AssignUsersPanel } from "./AssignUsersPanel";
+
+type ViewMode = "table" | "grid";
+
+type GroupMember = {
   id: number;
   fullName: string;
   username: string;
   dni: string;
   role: Role;
-  isActive: boolean;
-  createdAt: string;
+  active: boolean;
+  createdAt?: string | null;
 };
 
 type ViewGroup = {
@@ -46,241 +44,178 @@ type ViewGroup = {
   description?: string | null;
   createdAt: string;
   alertsLast24h: number;
+  vehicleCodes: string[];
 };
 
-type ViewMode = "table" | "grid";
-type UserModalMode = "create" | "edit";
+// Helpers de fecha deterministas (sin depender de locale)
+function formatDateShort(iso?: string | null) {
+  if (!iso) return "—";
+  const datePart = iso.slice(0, 10);
+  const [year, month, day] = datePart.split("-");
+  if (!year || !month || !day) return "—";
+  return `${day}/${month}/${year.slice(2)}`;
+}
+
+function formatDateLong(iso?: string | null) {
+  if (!iso) return "—";
+  const datePart = iso.slice(0, 10);
+  const [year, month, day] = datePart.split("-");
+  if (!year || !month || !day) return "—";
+  return `${day}/${month}/${year}`;
+}
 
 export default function GroupDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+
+  const auth = getAuthDataWeb();
+  const companyId = auth?.companyId ?? undefined;
 
   const rawGroupId = params.id;
   const groupId = Number(rawGroupId);
   const isValidGroupId = !Number.isNaN(groupId);
 
   const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
 
   // ================== DATA GROUP ==================
-
   const {
     data: groupDetail,
     isLoading: isLoadingGroup,
     isError: isErrorGroup,
-  } = useNotificationGroupById(isValidGroupId ? groupId : undefined);
+  } = useNotificationGroupById(companyId, isValidGroupId ? groupId : undefined);
 
   const group: ViewGroup | undefined = useMemo(() => {
     if (!groupDetail) return undefined;
 
-    // Tipamos el detalle incluyendo el campo opcional alertsLast24h,
-    // sin usar `any`
-    const typedDetail = groupDetail as unknown as {
+    const g = groupDetail as unknown as {
       id: number;
       name: string;
       description?: string | null;
       createdAt: string;
       alertsLast24h?: number | null;
+      vehicleCodes?: string[] | null;
     };
 
     return {
-      id: typedDetail.id,
-      name: typedDetail.name,
-      description: typedDetail.description ?? null,
-      createdAt: typedDetail.createdAt,
-      alertsLast24h: typedDetail.alertsLast24h ?? 0,
+      id: g.id,
+      name: g.name,
+      description: g.description ?? null,
+      createdAt: g.createdAt,
+      alertsLast24h: g.alertsLast24h ?? 0,
+      vehicleCodes: g.vehicleCodes ?? [],
     };
   }, [groupDetail]);
 
-  // ================== DATA USERS ==================
+  // ================== DATA USERS (MIEMBROS DEL GRUPO) ==================
 
   const [search, setSearch] = useState("");
   const [page] = useState(0);
   const pageSize = 50;
 
   const {
-    data: usersPage,
-    isLoading: isLoadingUsers,
-    isError: isErrorUsers,
-  } = useUsers({
+    data: membersPage,
+    isLoading: isLoadingMembers,
+    isError: isErrorMembers,
+  } = useGroupUsers({
     groupId: isValidGroupId ? groupId : undefined,
     q: search || undefined,
     page,
     size: pageSize,
   });
 
-  const users: ViewUser[] = useMemo(() => {
-    if (!usersPage) return [];
-    return usersPage.content.map((u) => ({
+  const members: GroupMember[] = useMemo(() => {
+    if (!membersPage) return [];
+    return (membersPage.content as GroupUserSummary[]).map((u) => ({
       id: u.id,
       fullName: u.fullName,
       username: u.username,
       dni: u.dni,
       role: u.role,
-      isActive: u.active,
-      createdAt: u.createdAt,
+      active: u.active,
+      createdAt: u.createdAt ?? null,
     }));
-  }, [usersPage]);
+  }, [membersPage]);
 
-  const usersActiveCount = users.filter((u) => u.isActive).length;
+  const membersCount = members.length;
+  const activeMembersCount = members.filter((m) => m.active).length;
+  const hasMembers = members.length > 0;
 
-  // ================== CREATE / EDIT USER (MODAL) ==================
-
-  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [userModalMode, setUserModalMode] = useState<UserModalMode>("create");
-  const [editingUser, setEditingUser] = useState<ViewUser | null>(null);
-
-  const [newFullName, setNewFullName] = useState("");
-  const [newDni, setNewDni] = useState("");
-  const [newUsername, setNewUsername] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<Role>("USER");
-
-  const { mutateAsync: createUser, isPending: isCreatingUser } = useCreateUser();
-  const { mutateAsync: updateUser, isPending: isUpdatingUser } = useUpdateUser();
-  const { mutateAsync: deleteUser, isPending: isDeletingUser } = useDeleteUser();
-
-  const isSavingUser = isCreatingUser || isUpdatingUser;
-
-  const openUserModal = () => {
-    setUserModalMode("create");
-    setEditingUser(null);
-    setNewFullName("");
-    setNewDni("");
-    setNewUsername("");
-    setNewPassword("");
-    setNewRole("USER");
-    setIsUserModalOpen(true);
-  };
-
-  const openEditUserModal = (user: ViewUser) => {
-    setUserModalMode("edit");
-    setEditingUser(user);
-    setNewFullName(user.fullName);
-    setNewDni(user.dni);
-    setNewUsername(user.username);
-    setNewPassword("");
-    setNewRole(user.role);
-    setIsUserModalOpen(true);
-  };
-
-  const closeUserModal = () => {
-    if (isSavingUser) return;
-    setIsUserModalOpen(false);
-  };
-
-  const handleSubmitUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isValidGroupId) return;
-
-    if (!newFullName.trim() || !newDni.trim() || !newUsername.trim()) {
-      return;
-    }
-
-    try {
-      if (userModalMode === "create") {
-        if (!newPassword.trim()) {
-          return;
-        }
-
-        await createUser({
-          groupId,
-          data: {
-            fullName: newFullName.trim(),
-            username: newUsername.trim(),
-            dni: newDni.trim(),
-            password: newPassword,
-            role: newRole,
-          },
-        });
-
-        setNewFullName("");
-        setNewDni("");
-        setNewUsername("");
-        setNewPassword("");
-
-        await Swal.fire({
-          icon: "success",
-          title: "Usuario creado",
-          timer: 1800,
-          showConfirmButton: false,
-          background: "#020617",
-          color: "#E5E7EB",
-          customClass: {
-            popup: "rounded-2xl border border-slate-800 bg-slate-950",
-            title: "text-sm font-semibold text-slate-50",
-          },
-        });
-      } else if (userModalMode === "edit" && editingUser) {
-        const payload: {
-          fullName?: string;
-          username?: string;
-          dni?: string;
-          password?: string;
-          role?: Role;
-        } = {
-          fullName: newFullName.trim(),
-          username: newUsername.trim(),
-          dni: newDni.trim(),
-          role: newRole,
-        };
-
-        if (newPassword.trim()) {
-          payload.password = newPassword;
-        }
-
-        await updateUser({
-          groupId,
-          userId: editingUser.id,
-          data: payload,
-        });
-
-        await Swal.fire({
-          icon: "success",
-          title: "Cambios guardados",
-          timer: 1800,
-          showConfirmButton: false,
-          background: "#020617",
-          color: "#E5E7EB",
-          customClass: {
-            popup: "rounded-2xl border border-slate-800 bg-slate-950",
-            title: "text-sm font-semibold text-slate-50",
-          },
-        });
-      }
-
-      setIsUserModalOpen(false);
-    } catch (err) {
-      console.error(err);
-      await Swal.fire({
-        icon: "error",
-        title:
-          userModalMode === "create"
-            ? "Error al crear usuario"
-            : "Error al actualizar usuario",
-        text: "Revisa los datos e inténtalo nuevamente.",
-        background: "#020617",
-        color: "#E5E7EB",
-        customClass: {
-          popup: "rounded-2xl border border-slate-800 bg-slate-950",
-          title: "text-sm font-semibold text-slate-50",
-          htmlContainer: "text-xs text-slate-300",
-        },
-      });
-    }
-  };
-
-  // ================== PLACAS DEL GRUPO ==================
+  // ================== PLACAS / MONTACARGAS DEL GRUPO ==================
 
   const { mutateAsync: updateGroup, isPending: isUpdatingGroup } =
     useUpdateNotificationGroup();
 
   const [newPlate, setNewPlate] = useState("");
-
-  // Modal para edición total
   const [isPlatesModalOpen, setIsPlatesModalOpen] = useState(false);
   const [platesText, setPlatesText] = useState("");
 
   const plates = groupDetail?.vehicleCodes ?? [];
+
+  // ================== ACCIONES MIEMBROS (QUITAR DEL GRUPO) ==================
+
+  const { mutateAsync: removeUserFromGroup, isPending: isRemovingMember } =
+    useRemoveUserFromGroup();
+
+  // ================== ESTADOS ESPECIALES (DESPUÉS de hooks) ==================
+
+  if (!companyId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-slate-400">
+        <p>No se encontró la empresa en la sesión actual.</p>
+        <button
+          type="button"
+          onClick={() => router.push("/login")}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver a iniciar sesión
+        </button>
+      </div>
+    );
+  }
+
+  if (!isValidGroupId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-slate-400">
+        <p>El identificador del grupo no es válido: {String(rawGroupId)}</p>
+        <button
+          type="button"
+          onClick={() => router.push("/app/groups")}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver a grupos
+        </button>
+      </div>
+    );
+  }
+
+  if (isLoadingGroup) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-400">
+        <p>Cargando información del grupo…</p>
+      </div>
+    );
+  }
+
+  if (isErrorGroup || !group) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-slate-400">
+        <p>No se encontró el grupo con id: {String(groupId)}</p>
+        <button
+          type="button"
+          onClick={() => router.push("/app/groups")}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver a grupos
+        </button>
+      </div>
+    );
+  }
+
+  // ================== HANDLERS PLACAS ==================
 
   const handleAddPlate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -314,7 +249,10 @@ export default function GroupDetailPage() {
     try {
       await updateGroup({
         id: groupDetail.id,
-        data: { vehicleCodes: updatedCodes },
+        data: {
+          companyId,
+          vehicleCodes: updatedCodes,
+        },
       });
 
       setNewPlate("");
@@ -350,12 +288,15 @@ export default function GroupDetailPage() {
   const handleRemovePlate = async (codeToRemove: string) => {
     if (!groupDetail) return;
 
-    const updatedCodes = plates.filter((c) => c !== codeToRemove);
+    const updatedCodes = plates.filter((c: string) => c !== codeToRemove);
 
     try {
       await updateGroup({
         id: groupDetail.id,
-        data: { vehicleCodes: updatedCodes },
+        data: {
+          companyId,
+          vehicleCodes: updatedCodes,
+        },
       });
 
       await Swal.fire({
@@ -408,7 +349,10 @@ export default function GroupDetailPage() {
     try {
       await updateGroup({
         id: groupDetail.id,
-        data: { vehicleCodes: codes },
+        data: {
+          companyId,
+          vehicleCodes: codes,
+        },
       });
 
       await Swal.fire({
@@ -442,57 +386,17 @@ export default function GroupDetailPage() {
     }
   };
 
-  // ================== ACCIONES USUARIOS ==================
+  // ================== HANDLER QUITAR MIEMBRO ==================
 
-  const handleToggleUserActive = async (user: ViewUser) => {
-    if (!isValidGroupId) return;
-
-    try {
-      await updateUser({
-        groupId,
-        userId: user.id,
-        data: { active: !user.isActive },
-      });
-
-      await Swal.fire({
-        icon: "success",
-        title: user.isActive ? "Usuario desactivado" : "Usuario activado",
-        timer: 1600,
-        showConfirmButton: false,
-        background: "#020617",
-        color: "#E5E7EB",
-        customClass: {
-          popup: "rounded-2xl border border-slate-800 bg-slate-950",
-          title: "text-sm font-semibold text-slate-50",
-          htmlContainer: "text-xs text-slate-300",
-        },
-      });
-    } catch (err) {
-      console.error(err);
-      await Swal.fire({
-        icon: "error",
-        title: "Error al cambiar estado",
-        text: "No se pudo actualizar el estado del usuario.",
-        background: "#020617",
-        color: "#E5E7EB",
-        customClass: {
-          popup: "rounded-2xl border border-slate-800 bg-slate-950",
-          title: "text-sm font-semibold text-slate-50",
-          htmlContainer: "text-xs text-slate-300",
-        },
-      });
-    }
-  };
-
-  const handleDeleteUser = async (user: ViewUser) => {
+  const handleRemoveMember = async (user: GroupMember) => {
     if (!isValidGroupId) return;
 
     const result = await Swal.fire({
-      title: "Eliminar usuario",
-      text: `¿Seguro que deseas eliminar al usuario "${user.fullName}" (${user.username})? Esta acción no se puede deshacer.`,
+      title: "Quitar usuario del grupo",
+      text: `¿Seguro que deseas quitar a "${user.fullName}" de este grupo? El usuario no se eliminará del sistema, solo dejará de pertenecer a este grupo.`,
       icon: "warning",
       showCancelButton: true,
-      confirmButtonText: "Sí, eliminar",
+      confirmButtonText: "Sí, quitar",
       cancelButtonText: "Cancelar",
       reverseButtons: true,
       background: "#020617",
@@ -512,11 +416,11 @@ export default function GroupDetailPage() {
     if (!result.isConfirmed) return;
 
     try {
-      await deleteUser({ groupId, userId: user.id });
+      await removeUserFromGroup({ groupId, userId: user.id });
 
       await Swal.fire({
         icon: "success",
-        title: "Usuario eliminado",
+        title: "Usuario quitado del grupo",
         timer: 1600,
         showConfirmButton: false,
         background: "#020617",
@@ -530,8 +434,8 @@ export default function GroupDetailPage() {
       console.error(err);
       await Swal.fire({
         icon: "error",
-        title: "Error al eliminar usuario",
-        text: "No se pudo eliminar el usuario.",
+        title: "Error al quitar usuario",
+        text: "No se pudo remover al usuario del grupo.",
         background: "#020617",
         color: "#E5E7EB",
         customClass: {
@@ -542,50 +446,6 @@ export default function GroupDetailPage() {
       });
     }
   };
-
-  // ================== ESTADOS ESPECIALES ==================
-
-  if (!isValidGroupId) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-slate-400">
-        <p>El identificador del grupo no es válido: {String(rawGroupId)}</p>
-        <button
-          type="button"
-          onClick={() => router.push("/app/groups")}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver a grupos
-        </button>
-      </div>
-    );
-  }
-
-  if (isLoadingGroup) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-400">
-        <p>Cargando información del grupo…</p>
-      </div>
-    );
-  }
-
-  if (isErrorGroup || !group) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-slate-400">
-        <p>No se encontró el grupo con id: {String(groupId)}</p>
-        <button
-          type="button"
-          onClick={() => router.push("/app/groups")}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver a grupos
-        </button>
-      </div>
-    );
-  }
-
-  const hasUsers = users.length > 0;
 
   // ================== RENDER ==================
 
@@ -609,63 +469,54 @@ export default function GroupDetailPage() {
               <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
                 {group.name}
               </h1>
-              {groupDetail?.description && (
+              {group.description && (
                 <p className="mt-0.5 max-w-xl text-xs text-slate-400 sm:text-sm">
-                  {groupDetail.description}
+                  {group.description}
                 </p>
               )}
             </div>
           </div>
-
-          {/* Botón nuevo usuario */}
-          <button
-            type="button"
-            onClick={openUserModal}
-            className="inline-flex items-center gap-2 rounded-xl border border-indigo-600 bg-indigo-600/10 px-3 py-2 text-xs font-medium text-indigo-300 transition hover:bg-indigo-600/20"
-          >
-            <UserPlus className="h-4 w-4" />
-            Nuevo usuario
-          </button>
         </div>
 
-        {!groupDetail?.description && (
+        {!group.description && (
           <p className="max-w-xl text-xs text-slate-400 sm:text-sm">
-            Gestión de usuarios para este grupo. Los usuarios aquí podrán recibir alertas
-            y notificaciones relacionadas al grupo.
+            Gestión de usuarios para este grupo. Aquí defines qué personas reciben alertas
+            y notificaciones asociadas a este grupo.
           </p>
         )}
       </div>
 
-      {/* Info rápida del grupo + placas */}
+      {/* Info rápida del grupo + montacargas */}
       <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {/* ID + fecha */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-400">ID de grupo</span>
           </div>
           <p className="mt-2 font-mono text-xs text-slate-300">{group.id}</p>
           <p className="mt-1 text-[11px] text-slate-500">
-            Creado el{" "}
-            {new Date(group.createdAt).toLocaleDateString(undefined, {
-              day: "2-digit",
-              month: "2-digit",
-              year: "2-digit",
-            })}
+            Creado el {formatDateLong(group.createdAt)}
           </p>
         </div>
 
+        {/* Usuarios del grupo */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-400">Usuarios activos</span>
+            <span className="text-xs font-medium text-slate-400">
+              Usuarios en el grupo
+            </span>
             <Users className="h-4 w-4 text-emerald-400" />
           </div>
           <p className="mt-2 text-2xl font-semibold text-emerald-300">
-            {usersActiveCount}
+            {activeMembersCount}
           </p>
           <p className="mt-1 text-[11px] text-slate-500">
-            De {users.length} usuario(s) registrados.
+            De {membersCount} usuario{membersCount === 1 ? "" : "s"} asignado
+            {membersCount === 1 ? "" : "s"}.
           </p>
         </div>
 
+        {/* Alertas 24h */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-400">
@@ -681,7 +532,7 @@ export default function GroupDetailPage() {
           </p>
         </div>
 
-        {/* Placas del grupo con edición total */}
+        {/* Montacargas del grupo */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:col-span-3 sm:p-4 lg:col-span-1 lg:row-span-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-400">
@@ -691,7 +542,7 @@ export default function GroupDetailPage() {
 
           <div className="mt-2 flex flex-wrap gap-1">
             {plates.length > 0 ? (
-              plates.map((code) => (
+              plates.map((code: string) => (
                 <span
                   key={code}
                   className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-slate-200"
@@ -749,24 +600,25 @@ export default function GroupDetailPage() {
         </div>
       </section>
 
-      {/* Lista de usuarios */}
+      {/* Lista de usuarios del grupo */}
       <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-800 bg-slate-950/80 shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2 sm:px-4 sm:py-3">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Users className="h-4 w-4 text-slate-500" />
             <span>
-              {users.length} usuario
-              {users.length === 1 ? "" : "s"} en este grupo
+              {isLoadingMembers
+                ? "Cargando usuarios del grupo…"
+                : `${membersCount} usuario${membersCount === 1 ? "" : "s"} en este grupo`}
             </span>
           </div>
 
-          {/* Search + toggle vista (solo desktop) */}
+          {/* Desktop: search + toggle + botón asignar */}
           <div className="hidden items-center gap-3 sm:flex">
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar usuario, DNI o login…"
+              placeholder="Buscar por nombre, usuario o DNI…"
               className="w-56 rounded-xl border border-slate-800 bg-slate-950 px-3 py-1.5 text-[11px] text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
             />
             <div className="flex items-center gap-1 text-xs text-slate-500">
@@ -798,24 +650,33 @@ export default function GroupDetailPage() {
                 <span>Grid</span>
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setIsAssignModalOpen(true)}
+              className="inline-flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-slate-50 hover:bg-indigo-500"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Asignar usuarios
+            </button>
           </div>
         </div>
 
         {/* Estados de carga / error */}
-        {isLoadingUsers && (
+        {isLoadingMembers && (
           <div className="flex flex-1 items-center justify-center text-xs text-slate-500">
-            Cargando usuarios…
+            Cargando usuarios del grupo…
           </div>
         )}
 
-        {isErrorUsers && !isLoadingUsers && (
+        {isErrorMembers && !isLoadingMembers && (
           <div className="flex flex-1 items-center justify-center text-xs text-rose-400">
-            Ocurrió un error al cargar los usuarios.
+            Ocurrió un error al cargar los usuarios del grupo.
           </div>
         )}
 
         {/* Desktop: tabla / grid */}
-        {!isLoadingUsers && !isErrorUsers && (
+        {!isLoadingMembers && !isErrorMembers && (
           <>
             {/* === Desktop: Tabla === */}
             {viewMode === "table" && (
@@ -847,8 +708,8 @@ export default function GroupDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {hasUsers &&
-                      users.map((u, idx) => (
+                    {hasMembers &&
+                      members.map((u, idx) => (
                         <tr
                           key={u.id}
                           className={cn(
@@ -878,7 +739,7 @@ export default function GroupDetailPage() {
                             </span>
                           </td>
                           <td className="border-b border-slate-900 px-4 py-2 align-top text-xs">
-                            {u.isActive ? (
+                            {u.active ? (
                               <span className="rounded-full border border-emerald-700/60 bg-emerald-900/50 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
                                 Activo
                               </span>
@@ -889,38 +750,26 @@ export default function GroupDetailPage() {
                             )}
                           </td>
                           <td className="border-b border-slate-900 px-4 py-2 align-top text-xs text-slate-400">
-                            {new Date(u.createdAt).toLocaleDateString()}
+                            {formatDateLong(u.createdAt ?? undefined)}
                           </td>
                           <td className="border-b border-slate-900 px-4 py-2 align-top text-[11px]">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => openEditUserModal(u)}
-                                className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 hover:border-indigo-500 hover:text-indigo-300"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleUserActive(u)}
-                                className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 hover:border-amber-500 hover:text-amber-300"
-                              >
-                                <Power className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteUser(u)}
-                                disabled={isDeletingUser}
-                                className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 hover:border-rose-500 hover:text-rose-300 disabled:opacity-60"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMember(u)}
+                              disabled={isRemovingMember}
+                              className={cn(
+                                "inline-flex items-center justify-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 hover:border-rose-500 hover:text-rose-300",
+                                isRemovingMember && "cursor-not-allowed opacity-60"
+                              )}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Quitar</span>
+                            </button>
                           </td>
                         </tr>
                       ))}
 
-                    {!hasUsers && (
+                    {!hasMembers && (
                       <tr>
                         <td
                           colSpan={7}
@@ -938,15 +787,15 @@ export default function GroupDetailPage() {
             {/* === Desktop: Grid === */}
             {viewMode === "grid" && (
               <div className="hidden min-h-0 flex-1 flex-col overflow-y-auto sm:flex">
-                {!hasUsers && (
+                {!hasMembers && (
                   <div className="px-4 py-8 text-center text-xs text-slate-500">
                     No hay usuarios que coincidan con la búsqueda.
                   </div>
                 )}
 
-                {hasUsers && (
+                {hasMembers && (
                   <div className="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-                    {users.map((u) => (
+                    {members.map((u) => (
                       <div
                         key={u.id}
                         className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950 p-3 shadow-sm"
@@ -971,7 +820,7 @@ export default function GroupDetailPage() {
                               >
                                 {u.role === "ADMIN" ? "Admin" : "Usuario"}
                               </span>
-                              {u.isActive ? (
+                              {u.active ? (
                                 <span className="rounded-full border border-emerald-700/60 bg-emerald-900/50 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
                                   Activo
                                 </span>
@@ -986,23 +835,12 @@ export default function GroupDetailPage() {
                           <div className="flex flex-col gap-1 text-[11px] text-slate-400">
                             <button
                               type="button"
-                              onClick={() => openEditUserModal(u)}
-                              className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-indigo-500 hover:text-indigo-300"
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleUserActive(u)}
-                              className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-amber-500 hover:text-amber-300"
-                            >
-                              <Power className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteUser(u)}
-                              disabled={isDeletingUser}
-                              className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-rose-500 hover:text-rose-300 disabled:opacity-60"
+                              onClick={() => handleRemoveMember(u)}
+                              disabled={isRemovingMember}
+                              className={cn(
+                                "inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-rose-500 hover:text-rose-300",
+                                isRemovingMember && "cursor-not-allowed opacity-60"
+                              )}
                             >
                               <Trash2 className="h-3 w-3" />
                             </button>
@@ -1010,12 +848,7 @@ export default function GroupDetailPage() {
                         </div>
 
                         <div className="mt-3 text-[11px] text-slate-500">
-                          Alta:{" "}
-                          {new Date(u.createdAt).toLocaleDateString(undefined, {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "2-digit",
-                          })}
+                          Alta: {formatDateShort(u.createdAt ?? undefined)}
                         </div>
                       </div>
                     ))}
@@ -1027,22 +860,31 @@ export default function GroupDetailPage() {
             {/* Mobile: cards */}
             <div className="flex min-h-0 flex-1 flex-col divide-y divide-slate-900 overflow-y-auto sm:hidden">
               <div className="px-3 pt-2">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar usuario, DNI o login…"
-                  className="mb-2 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Buscar por nombre, usuario o DNI…"
+                    className="mb-2 flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsAssignModalOpen(true)}
+                    className="mb-2 inline-flex items-center justify-center rounded-xl bg-indigo-600 px-3 py-2 text-[11px] font-medium text-slate-50 hover:bg-indigo-500"
+                  >
+                    <UserPlus className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
-              {!hasUsers && (
+              {!hasMembers && (
                 <div className="px-4 py-4 text-center text-xs text-slate-500">
                   No hay usuarios que coincidan con la búsqueda.
                 </div>
               )}
 
-              {users.map((u) => (
+              {members.map((u) => (
                 <div key={u.id} className="px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 space-y-1">
@@ -1060,7 +902,7 @@ export default function GroupDetailPage() {
                         >
                           {u.role === "ADMIN" ? "Admin" : "Usuario"}
                         </span>
-                        {u.isActive ? (
+                        {u.active ? (
                           <span className="rounded-full border border-emerald-700/60 bg-emerald-900/50 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
                             Activo
                           </span>
@@ -1070,40 +912,24 @@ export default function GroupDetailPage() {
                           </span>
                         )}
                       </div>
+                      <p className="text-[11px] text-slate-500">
+                        Alta: {formatDateShort(u.createdAt ?? undefined)}
+                      </p>
                     </div>
+
                     <div className="flex flex-col gap-1 text-[11px] text-slate-400">
                       <button
                         type="button"
-                        onClick={() => openEditUserModal(u)}
-                        className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-indigo-500 hover:text-indigo-300"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleUserActive(u)}
-                        className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-amber-500 hover:text-amber-300"
-                      >
-                        <Power className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteUser(u)}
-                        disabled={isDeletingUser}
-                        className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-rose-500 hover:text-rose-300 disabled:opacity-60"
+                        onClick={() => handleRemoveMember(u)}
+                        disabled={isRemovingMember}
+                        className={cn(
+                          "inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-rose-500 hover:text-rose-300",
+                          isRemovingMember && "cursor-not-allowed opacity-60"
+                        )}
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>
                     </div>
-                  </div>
-
-                  <div className="mt-2 text-[11px] text-slate-500">
-                    Alta:{" "}
-                    {new Date(u.createdAt).toLocaleDateString(undefined, {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "2-digit",
-                    })}
                   </div>
                 </div>
               ))}
@@ -1177,135 +1003,13 @@ export default function GroupDetailPage() {
         </div>
       )}
 
-      {/* MODAL CREAR / EDITAR USUARIO */}
-      {isUserModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-3">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-xl sm:p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-50">
-                  {userModalMode === "create"
-                    ? "Nuevo usuario del grupo"
-                    : `Editar usuario${editingUser ? `: ${editingUser.fullName}` : ""}`}
-                </h2>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  {userModalMode === "create"
-                    ? "Crea un usuario que recibirá alertas y notificaciones asociadas a este grupo."
-                    : "Actualiza los datos del usuario. Deja la contraseña vacía si no deseas cambiarla."}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeUserModal}
-                className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-400 hover:border-slate-500 hover:text-slate-200"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmitUser} className="mt-4 space-y-3">
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-slate-300">
-                  Nombre completo
-                </label>
-                <input
-                  type="text"
-                  value={newFullName}
-                  onChange={(e) => setNewFullName(e.target.value)}
-                  placeholder="Ej. Operador turno noche"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-slate-300">DNI</label>
-                  <input
-                    type="text"
-                    value={newDni}
-                    onChange={(e) => setNewDni(e.target.value)}
-                    placeholder="Documento de identidad"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-slate-300">
-                    Usuario (login)
-                  </label>
-                  <input
-                    type="text"
-                    value={newUsername}
-                    onChange={(e) => setNewUsername(e.target.value)}
-                    placeholder="Nombre de usuario para acceder"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-slate-300">
-                    {userModalMode === "create"
-                      ? "Contraseña inicial"
-                      : "Nueva contraseña (opcional)"}
-                  </label>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder={
-                      userModalMode === "create"
-                        ? "Contraseña temporal"
-                        : "Deja en blanco para no cambiarla"
-                    }
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-slate-300">
-                    Rol en el grupo
-                  </label>
-                  <select
-                    value={newRole}
-                    onChange={(e) => setNewRole(e.target.value as Role)}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                  >
-                    <option value="USER">Usuario</option>
-                    <option value="ADMIN">Admin</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={closeUserModal}
-                  className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 hover:border-slate-500"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSavingUser}
-                  className={cn(
-                    "inline-flex items-center justify-center gap-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-slate-50 transition hover:bg-indigo-500",
-                    isSavingUser && "cursor-not-allowed opacity-70"
-                  )}
-                >
-                  <UserPlus className="h-4 w-4" />
-                  {isSavingUser
-                    ? userModalMode === "create"
-                      ? "Creando…"
-                      : "Guardando…"
-                    : userModalMode === "create"
-                      ? "Crear usuario"
-                      : "Guardar cambios"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* MODAL ASIGNACIÓN DE USUARIOS */}
+      <AssignUsersPanel
+        groupId={group.id}
+        companyId={companyId}
+        isOpen={isAssignModalOpen}
+        onClose={() => setIsAssignModalOpen(false)}
+      />
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
   useDeleteNotificationGroup,
 } from "@/api/hooks/useNotificationGroups";
 import type { NotificationGroupSummary } from "@/api/services/notificationGroupService";
+import { getAuthDataWeb } from "@/api/webAuthStorage";
 
 type ViewMode = "table" | "grid";
 
@@ -44,10 +45,10 @@ type ModalMode = "create" | "edit";
 // Helpers de fecha deterministas (sin locale)
 function formatDateShort(iso?: string) {
   if (!iso) return "—";
-  const datePart = iso.slice(0, 10); // "2025-12-05"
+  const datePart = iso.slice(0, 10);
   const [year, month, day] = datePart.split("-");
   if (!year || !month || !day) return "—";
-  return `${day}/${month}/${year.slice(2)}`; // 05/12/25
+  return `${day}/${month}/${year.slice(2)}`;
 }
 
 function formatDateLong(iso?: string) {
@@ -55,10 +56,13 @@ function formatDateLong(iso?: string) {
   const datePart = iso.slice(0, 10);
   const [year, month, day] = datePart.split("-");
   if (!year || !month || !day) return "—";
-  return `${day}/${month}/${year}`; // 05/12/2025
+  return `${day}/${month}/${year}`;
 }
 
 export default function GroupsPage() {
+  const auth = getAuthDataWeb();
+  const companyId = auth?.companyId;
+
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
 
@@ -71,12 +75,13 @@ export default function GroupsPage() {
   const [newGroupDesc, setNewGroupDesc] = useState("");
   const [newGroupVehicleCodes, setNewGroupVehicleCodes] = useState("");
 
-  // Paginación básica (si aún no tienes UI, lo dejas fijo en 0)
+  // Paginación básica
   const [page] = useState(0);
   const pageSize = 20;
 
   // ==== LISTADO DESDE API ====
   const { data, isLoading, isError } = useNotificationGroups({
+    companyId,
     q: search || undefined,
     page,
     size: pageSize,
@@ -137,9 +142,30 @@ export default function GroupsPage() {
     setIsModalOpen(false);
   };
 
+  const ensureCompanyIdOrToast = async (): Promise<number | null> => {
+    if (!companyId) {
+      await Swal.fire({
+        icon: "error",
+        title: "Sesión inválida",
+        text: "No se encontró la empresa en la sesión actual.",
+        background: "#020617",
+        color: "#E5E7EB",
+        customClass: {
+          popup: "rounded-2xl border border-slate-800 bg-slate-950",
+          title: "text-sm font-semibold text-slate-50",
+        },
+      });
+      return null;
+    }
+    return companyId;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGroupName.trim()) return;
+
+    const cid = await ensureCompanyIdOrToast();
+    if (!cid) return;
 
     const vehicleCodes = newGroupVehicleCodes
       .split(",")
@@ -148,6 +174,7 @@ export default function GroupsPage() {
 
     if (modalMode === "create") {
       await createGroup({
+        companyId: cid,
         name: newGroupName.trim(),
         description: newGroupDesc.trim() || undefined,
         active: true,
@@ -170,6 +197,7 @@ export default function GroupsPage() {
       await updateGroup({
         id: Number(editingGroup.id),
         data: {
+          companyId: cid,
           name: newGroupName.trim(),
           description: newGroupDesc.trim() || undefined,
           vehicleCodes: vehicleCodes.length > 0 ? vehicleCodes : [],
@@ -194,11 +222,14 @@ export default function GroupsPage() {
   };
 
   const handleToggleActive = async (group: Group) => {
+    const cid = await ensureCompanyIdOrToast();
+    if (!cid) return;
+
     const newState = !group.isActive;
 
     await updateGroup({
       id: Number(group.id),
-      data: { active: newState },
+      data: { companyId: cid, active: newState },
     });
 
     await Swal.fire({
@@ -216,6 +247,9 @@ export default function GroupsPage() {
   };
 
   const handleDelete = async (group: Group) => {
+    const cid = await ensureCompanyIdOrToast();
+    if (!cid) return;
+
     const result = await Swal.fire({
       title: "Eliminar grupo",
       text: `¿Seguro que deseas eliminar el grupo "${group.name}"? Esta acción no se puede deshacer.`,
@@ -224,8 +258,8 @@ export default function GroupsPage() {
       confirmButtonText: "Sí, eliminar",
       cancelButtonText: "Cancelar",
       reverseButtons: true,
-      background: "#020617", // fondo dark (slate-950)
-      color: "#E5E7EB", // texto gris claro
+      background: "#020617",
+      color: "#E5E7EB",
       buttonsStyling: false,
       customClass: {
         popup: "rounded-2xl border border-slate-800 bg-slate-950",
@@ -240,7 +274,7 @@ export default function GroupsPage() {
 
     if (!result.isConfirmed) return;
 
-    await deleteGroup(Number(group.id));
+    await deleteGroup({ companyId: cid, id: Number(group.id) });
 
     await Swal.fire({
       icon: "success",

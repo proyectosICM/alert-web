@@ -2,6 +2,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { ReactQueryProvider } from "./react-query-provider";
+import "sweetalert2/dist/sweetalert2.min.css";
 
 export const metadata: Metadata = {
   title: "Alerts",

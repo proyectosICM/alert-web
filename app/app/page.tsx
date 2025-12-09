@@ -7,8 +7,10 @@ import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
 
 import { useAlerts } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
+import { getAuthDataWeb } from "@/api/webAuthStorage";
+import { stripHtml } from "@/lib/utils";
 
-// ====== Buckets de severidad (igual que en mobile) ======
+// ====== Buckets de severidad (igual que en alerts) ======
 type SeverityBucket = "LOW" | "MEDIUM" | "HIGH";
 
 function mapSeverityToBucket(severity?: string | null): SeverityBucket {
@@ -23,17 +25,16 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
   return "LOW";
 }
 
-// Limpia HTML por si acaso
-function stripHtml(value?: string | null): string {
-  if (!value) return "";
-  return value.replace(/<[^>]*>/g, "");
-}
-
 export default function AppHome() {
   const router = useRouter();
 
+  // 🔐 Obtenemos companyId desde el storage de auth
+  const auth = getAuthDataWeb();
+  const companyId = auth?.companyId;
+
   // Últimas alertas: misma lógica que en Expo (page 0, size 5)
   const { data, isLoading, isError, error } = useAlerts({
+    companyId, // 👈 importante
     page: 0,
     size: 5,
   });
@@ -53,6 +54,15 @@ export default function AppHome() {
   const handleGoSettings = () => {
     router.push("/app/settings");
   };
+
+  // Guard de empresa (igual que en AlertsPage)
+  if (!companyId) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-slate-400">
+        No hay empresa seleccionada. Vuelve a iniciar sesión.
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
@@ -80,7 +90,7 @@ export default function AppHome() {
           </div>
           <p className="mt-2 text-2xl font-semibold text-slate-50">{totalElements}</p>
           <p className="mt-1 text-[11px] text-slate-500">
-            Total de alertas registradas en Alerty.
+            Total de alertas registradas en Alerty para esta empresa.
           </p>
         </div>
 

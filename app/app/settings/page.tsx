@@ -1,3 +1,4 @@
+// app/app/settings/page.tsx
 "use client";
 
 import React from "react";
@@ -5,24 +6,34 @@ import { useRouter } from "next/navigation";
 import { User2, Info, LogOut } from "lucide-react";
 
 import { useUserById } from "@/api/hooks/useUsers";
+import { getAuthDataWeb, clearAuthDataWeb } from "@/api/webAuthStorage";
 
 export default function SettingsPage() {
   const router = useRouter();
 
-  // 🔹 De momento usamos el mismo usuario de pruebas (id = 1)
-  const { data: user, isLoading, isError, error } = useUserById({ userId: 1 });
+  // 🔐 Datos auth desde localStorage
+  const auth = getAuthDataWeb();
+  const username = auth?.username ?? null;
+  const userId = auth?.userId; // 👈 usamos el ID
+
+  const { data: user, isLoading, isError, error } = useUserById(userId);
 
   const handleLogout = () => {
-    // TODO: ajusta según tu flujo real de auth (cookies, tokens, etc.)
-    if (typeof window !== "undefined") {
-      localStorage.clear();
-    }
+    clearAuthDataWeb();
     router.push("/login");
   };
 
+  if (!userId) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-slate-400">
+        No se encontró información de usuario en la sesión. Vuelve a iniciar sesión.
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
-      {/* HEADER estilo alerts/groups */}
+      {/* HEADER */}
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <User2 className="h-5 w-5 text-indigo-400" />
@@ -35,7 +46,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* CARD: CUENTA */}
+      {/* CUENTA */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex items-center gap-2">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-900 text-slate-200">
@@ -46,7 +57,7 @@ export default function SettingsPage() {
 
         <div className="space-y-1.5 text-sm">
           <p className="font-mono text-[11px] tracking-wide text-slate-500 uppercase">
-            Usuario (id = 1)
+            Usuario {username ? `(@${username})` : "(sin username en localStorage)"}
           </p>
 
           {isLoading && (
@@ -73,12 +84,13 @@ export default function SettingsPage() {
               <p className="text-xs text-slate-500">
                 Rol: {user.role} · {user.active ? "Activo" : "Inactivo"}
               </p>
+              <p className="text-[11px] text-slate-600">ID interno: {user.id}</p>
             </>
           )}
         </div>
       </section>
 
-      {/* CARD: ACERCA DE */}
+      {/* ACERCA DE */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex items-center gap-2">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-900 text-slate-200">
@@ -98,7 +110,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* BOTÓN: CERRAR SESIÓN */}
+      {/* LOGOUT */}
       <section>
         <button
           type="button"

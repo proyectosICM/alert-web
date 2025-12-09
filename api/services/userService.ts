@@ -11,6 +11,8 @@ export type Role = "SA" | "ADMIN" | "USER";
 // Equivalente a GroupUserSummaryDto
 export type GroupUserSummary = {
   id: number;
+  companyId: number | null;
+  companyName: string | null;
   fullName: string;
   username: string;
   dni: string;
@@ -22,6 +24,8 @@ export type GroupUserSummary = {
 // Equivalente a GroupUserDetailDto
 export type GroupUserDetail = {
   id: number;
+  companyId: number | null;
+  companyName: string | null;
   fullName: string;
   username: string;
   dni: string;
@@ -31,16 +35,17 @@ export type GroupUserDetail = {
   updatedAt: string;
 };
 
-// Equivalente a CreateGroupUserRequest
+// Equivalente a CreateUserRequest (BACK)
 export type CreateUserRequest = {
   fullName: string;
-  username: string;
+  username?: string;
   dni: string;
-  password: string;
+  password?: string;
   role: Role;
+  companyId: number;
 };
 
-// Equivalente a UpdateGroupUserRequest (parcial)
+// Equivalente a UpdateGroupUserRequest (BACK)
 export type UpdateUserRequest = {
   fullName?: string;
   username?: string;
@@ -51,9 +56,9 @@ export type UpdateUserRequest = {
 };
 
 // ============== LIST / SEARCH ==============
-// GET /api/users?groupId=..&q=..&page=..&size=..
+// GET /api/users?companyId=..&q=..&page=..&size=..
 export const searchUsers = async (params: {
-  groupId: number;
+  companyId: number;
   q?: string;
   page?: number;
   size?: number;
@@ -65,58 +70,45 @@ export const searchUsers = async (params: {
 };
 
 // ============== READ ONE ==============
-// Sobrecargas:
+
 // GET /api/users/{userId}
-export function getUserById(userId: number): Promise<GroupUserDetail>;
-// GET /api/users/{userId}?groupId=..
-export function getUserById(groupId: number, userId: number): Promise<GroupUserDetail>;
+export const getUserById = async (userId: number) => {
+  const response = await api.get<GroupUserDetail>(`${endpoint}/${userId}`);
+  return response.data;
+};
 
-// Implementación común
-export async function getUserById(a: number, b?: number) {
-  if (typeof b === "number") {
-    // getUserById(groupId, userId)
-    const groupId = a;
-    const userId = b;
-
-    const response = await api.get<GroupUserDetail>(`${endpoint}/${userId}`, {
-      params: { groupId },
-    });
-    return response.data;
-  } else {
-    // getUserById(userId)
-    const userId = a;
-
-    const response = await api.get<GroupUserDetail>(`${endpoint}/${userId}`);
-    return response.data;
-  }
-}
-
-// ============== CREATE ==============
-// POST /api/users?groupId=..
-export const createUser = async (groupId: number, payload: CreateUserRequest) => {
-  const response = await api.post<GroupUserDetail>(endpoint, payload, {
-    params: { groupId },
+// GET /api/users/by-username?username=...
+export const getUserByUsername = async (username: string) => {
+  const response = await api.get<GroupUserDetail>(`${endpoint}/by-username`, {
+    params: { username },
   });
   return response.data;
 };
 
+// ============== CREATE ==============
+// POST /api/users
+export const createUser = async (payload: CreateUserRequest) => {
+  const response = await api.post<GroupUserDetail>(endpoint, payload);
+  return response.data;
+};
+
 // ============== UPDATE (PATCH) ==============
-// PATCH /api/users/{userId}?groupId=..
+// PATCH /api/users/{userId}?companyId=..
 export const updateUser = async (
-  groupId: number,
+  companyId: number,
   userId: number,
   payload: UpdateUserRequest
 ) => {
   const response = await api.patch<GroupUserDetail>(`${endpoint}/${userId}`, payload, {
-    params: { groupId },
+    params: { companyId },
   });
   return response.data;
 };
 
 // ============== DELETE ==============
-// DELETE /api/users/{userId}?groupId=..
-export const deleteUser = async (groupId: number, userId: number) => {
+// DELETE /api/users/{userId}?companyId=..
+export const deleteUser = async (companyId: number, userId: number) => {
   await api.delete(`${endpoint}/${userId}`, {
-    params: { groupId },
+    params: { companyId },
   });
 };

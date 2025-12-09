@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import { cn, stripHtml } from "@/lib/utils";
 import { useAlerts, useAcknowledgeAlert } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
+import { getAuthDataWeb } from "@/api/webAuthStorage";
 
 // ====== Buckets de severidad visual (mapean el string de backend) ======
 type SeverityBucket = "LOW" | "MEDIUM" | "HIGH";
@@ -87,6 +88,11 @@ type ViewMode = "table" | "grid";
 
 export default function AlertsPage() {
   const router = useRouter();
+
+  // 🔐 Obtenemos companyId del auth
+  const auth = getAuthDataWeb();
+  const companyId = auth?.companyId;
+
   const [severityFilter, setSeverityFilter] = useState<SeverityBucket | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -94,6 +100,7 @@ export default function AlertsPage() {
   const pageSize = 20;
 
   const { data, isLoading, isError, error } = useAlerts({
+    companyId, // 👈 ahora se pasa companyId
     page,
     size: pageSize,
   });
@@ -148,8 +155,19 @@ export default function AlertsPage() {
 
   const handleMarkReviewed = async (alert: AlertSummary) => {
     if (alert.acknowledged) return;
-    await acknowledgeAlert(alert.id);
+    if (!companyId) return; // por seguridad, aunque en práctica siempre deberías tenerlo
+
+    await acknowledgeAlert({ companyId, id: alert.id });
   };
+
+  // Si por alguna razón no hay companyId (no autenticado / sesión rota)
+  if (!companyId) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-slate-400">
+        No hay empresa seleccionada. Vuelve a iniciar sesión.
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">

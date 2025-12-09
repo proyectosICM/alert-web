@@ -1,25 +1,49 @@
-// app/app/alerts/[id]/page.tsx
 "use client";
 
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, Bell, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+
 import { cn, stripHtml } from "@/lib/utils";
 import { useAlert, useAcknowledgeAlert } from "@/api/hooks/useAlerts";
+import { getAuthDataWeb } from "@/api/webAuthStorage";
 
 export default function AlertDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
 
-  const { data: alert, isLoading, isError, error } = useAlert(id);
+  // 👇 leemos la sesión para obtener companyId
+  const auth = getAuthDataWeb();
+  const companyId = auth?.companyId;
+
+  const { data: alert, isLoading, isError, error } = useAlert(companyId, id);
+
   const { mutateAsync: acknowledgeAlert, isPending: isAcking } = useAcknowledgeAlert();
 
   const handleBack = () => router.push("/app/alerts");
 
   const handleMarkReviewed = async () => {
     if (!alert || alert.acknowledged) return;
-    await acknowledgeAlert(alert.id);
+    if (!companyId) return; // por seguridad
+
+    await acknowledgeAlert({ companyId, id: alert.id });
   };
+
+  // Si no hay companyId en sesión, mostramos mensaje
+  if (!companyId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-slate-400">
+        <p>No se encontró una empresa asociada a la sesión actual.</p>
+        <button
+          type="button"
+          onClick={() => router.replace("/login")}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
+        >
+          Ir al login
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -32,7 +56,7 @@ export default function AlertDetailPage() {
   if (isError || !alert) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-slate-400">
-        <p>Error al cargar la alerta: {error?.message}</p>
+        <p>Error al cargar la alerta: {error?.message ?? "No se encontró la alerta."}</p>
         <button
           type="button"
           onClick={handleBack}

@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, Bell, Users, Settings } from "lucide-react";
+import {
+  LayoutDashboard,
+  Bell,
+  Users,
+  Settings,
+  UserCog, // 👈 nuevo icono para gestión de usuarios
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -16,6 +22,7 @@ const navItems: NavItem[] = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/alerts", label: "Alertas", icon: Bell },
   { href: "/app/groups", label: "Grupos", icon: Users },
+  { href: "/app/users", label: "Usuarios", icon: UserCog }, // 👈 gestión de usuarios
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 

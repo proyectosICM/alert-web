@@ -1,4 +1,3 @@
-// src/api/services/alertService.ts
 import api from "../apiClient";
 import type { PageResponse } from "./notificationGroupService";
 
@@ -52,7 +51,6 @@ export type AlertSummary = {
   severity?: string | null;
 
   plant?: string | null;
-
   area?: string | null;
 
   shortDescription?: string | null;
@@ -107,44 +105,72 @@ export type UpdateAlertRequest = {
 
 // ========== SERVICES ==========
 
-// GET /api/alerts?page=0&size=20
-export const getAlerts = async (params: { page?: number; size?: number }) => {
-  const response = await api.get<PageResponse<AlertSummary>>(`${endpoint}`, { params });
+// GET /api/alerts?companyId=...&page=0&size=20
+export const getAlerts = async (params: {
+  companyId: number;
+  page?: number;
+  size?: number;
+}) => {
+  const { companyId, ...query } = params;
+
+  const response = await api.get<PageResponse<AlertSummary>>(`${endpoint}`, {
+    params: {
+      companyId,
+      ...query,
+    },
+  });
+
   return response.data;
 };
 
-// GET /api/alerts/{id}
-export const getAlertById = async (id: number) => {
-  const response = await api.get<AlertDetail>(`${endpoint}/${id}`);
+// GET /api/alerts/{id}?companyId=...
+export const getAlertById = async (companyId: number, id: number) => {
+  const response = await api.get<AlertDetail>(`${endpoint}/${id}`, {
+    params: { companyId },
+  });
   return response.data;
 };
 
-// GET /api/alerts/group/{groupId}?page=0&size=20
+// GET /api/alerts/group/{groupId}?companyId=...&page=0&size=20
 export const getAlertsByGroup = async (params: {
+  companyId: number;
   groupId: number;
   page?: number;
   size?: number;
 }) => {
-  const { groupId, ...query } = params;
+  const { companyId, groupId, ...query } = params;
+
   const response = await api.get<PageResponse<AlertSummary>>(
     `${endpoint}/group/${groupId}`,
-    { params: query }
+    {
+      params: {
+        companyId,
+        ...query,
+      },
+    }
   );
   return response.data;
 };
 
-// GET /api/alerts/group/{groupId}/range?from=...&to=...&page=...&size=...
+// GET /api/alerts/group/{groupId}/range?companyId=...&from=...&to=...&page=...&size=...
 export const getAlertsByGroupAndRange = async (params: {
+  companyId: number;
   groupId: number;
   from: string; // ISO-8601
   to: string; // ISO-8601
   page?: number;
   size?: number;
 }) => {
-  const { groupId, ...query } = params;
+  const { companyId, groupId, ...query } = params;
+
   const response = await api.get<PageResponse<AlertSummary>>(
     `${endpoint}/group/${groupId}/range`,
-    { params: query }
+    {
+      params: {
+        companyId,
+        ...query,
+      },
+    }
   );
   return response.data;
 };
@@ -155,18 +181,51 @@ export const createAlert = async (payload: CreateAlertRequest) => {
   return response.data;
 };
 
-// PATCH /api/alerts/{id}
-export const updateAlert = async (id: number, payload: UpdateAlertRequest) => {
-  const response = await api.patch<AlertDetail>(`${endpoint}/${id}`, payload);
+// PATCH /api/alerts/{id}?companyId=...
+export const updateAlert = async (
+  companyId: number,
+  id: number,
+  payload: UpdateAlertRequest
+) => {
+  const response = await api.patch<AlertDetail>(`${endpoint}/${id}`, payload, {
+    params: { companyId },
+  });
   return response.data;
 };
 
-// DELETE /api/alerts/{id}
-export const deleteAlert = async (id: number) => {
-  await api.delete(`${endpoint}/${id}`);
+// DELETE /api/alerts/{id}?companyId=...
+export const deleteAlert = async (companyId: number, id: number) => {
+  await api.delete(`${endpoint}/${id}`, {
+    params: { companyId },
+  });
 };
 
-export const acknowledgeAlert = async (id: number) => {
-  const response = await api.post<AlertDetail>(`${endpoint}/${id}/ack`);
+// POST /api/alerts/{id}/ack?companyId=...
+export const acknowledgeAlert = async (companyId: number, id: number) => {
+  const response = await api.post<AlertDetail>(`${endpoint}/${id}/ack`, null, {
+    params: { companyId },
+  });
+  return response.data;
+};
+
+// GET /api/alerts/user/{userId}?companyId=...&page=0&size=20
+export const getAlertsByUser = async (params: {
+  companyId: number;
+  userId: number;
+  page?: number;
+  size?: number;
+}) => {
+  const { companyId, userId, ...query } = params;
+
+  const response = await api.get<PageResponse<AlertSummary>>(
+    `${endpoint}/user/${userId}`,
+    {
+      params: {
+        companyId,
+        ...query,
+      },
+    }
+  );
+
   return response.data;
 };
