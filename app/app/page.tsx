@@ -5,7 +5,7 @@ import React, { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
 
-import { useAlerts } from "@/api/hooks/useAlerts";
+import { useAlertsByUser } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { stripHtml } from "@/lib/utils";
@@ -28,13 +28,15 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
 export default function AppHome() {
   const router = useRouter();
 
-  // 🔐 Obtenemos companyId desde el storage de auth
+  // 🔐 Obtenemos companyId y userId desde el storage de auth
   const auth = getAuthDataWeb();
   const companyId = auth?.companyId;
+  const userId = auth?.userId;
 
-  // Últimas alertas: misma lógica que en Expo (page 0, size 5)
-  const { data, isLoading, isError, error } = useAlerts({
-    companyId, // 👈 importante
+  // Últimas alertas del usuario: page 0, size 5
+  const { data, isLoading, isError, error } = useAlertsByUser({
+    companyId,
+    userId,
     page: 0,
     size: 5,
   });
@@ -55,11 +57,11 @@ export default function AppHome() {
     router.push("/app/settings");
   };
 
-  // Guard de empresa (igual que en AlertsPage)
-  if (!companyId) {
+  // Guard de empresa/usuario (igual criterio que en AlertsPage)
+  if (!companyId || !userId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-slate-400">
-        No hay empresa seleccionada. Vuelve a iniciar sesión.
+        No hay empresa o usuario válido. Vuelve a iniciar sesión.
       </div>
     );
   }

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn, stripHtml } from "@/lib/utils";
-import { useAlerts, useAcknowledgeAlert } from "@/api/hooks/useAlerts";
+import { useAlertsByUser, useAcknowledgeAlert } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 
@@ -89,9 +89,10 @@ type ViewMode = "table" | "grid";
 export default function AlertsPage() {
   const router = useRouter();
 
-  // 🔐 Obtenemos companyId del auth
+  // 🔐 Obtenemos companyId y userId del auth
   const auth = getAuthDataWeb();
   const companyId = auth?.companyId;
+  const userId = auth?.userId;
 
   const [severityFilter, setSeverityFilter] = useState<SeverityBucket | "ALL">("ALL");
   const [search, setSearch] = useState("");
@@ -99,8 +100,9 @@ export default function AlertsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const pageSize = 20;
 
-  const { data, isLoading, isError, error } = useAlerts({
-    companyId, // 👈 ahora se pasa companyId
+  const { data, isLoading, isError, error } = useAlertsByUser({
+    companyId,
+    userId,
     page,
     size: pageSize,
   });
@@ -155,16 +157,16 @@ export default function AlertsPage() {
 
   const handleMarkReviewed = async (alert: AlertSummary) => {
     if (alert.acknowledged) return;
-    if (!companyId) return; // por seguridad, aunque en práctica siempre deberías tenerlo
+    if (!companyId) return; // por seguridad
 
     await acknowledgeAlert({ companyId, id: alert.id });
   };
 
-  // Si por alguna razón no hay companyId (no autenticado / sesión rota)
-  if (!companyId) {
+  // Si no hay empresa o usuario válido
+  if (!companyId || !userId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-slate-400">
-        No hay empresa seleccionada. Vuelve a iniciar sesión.
+        No hay empresa o usuario válido. Vuelve a iniciar sesión.
       </div>
     );
   }
