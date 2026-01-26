@@ -1,7 +1,7 @@
 // app/(app)/comportamiento/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
 
@@ -23,6 +23,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
+import { count } from "console";
 
 type Mode = "EQUIPO" | "INFRAESTRUCTURA" | "OPERADOR";
 
@@ -378,8 +379,12 @@ export default function ComportamientoPage() {
                   width={28}
                 />
                 <Tooltip
-                  formatter={(value: number | string) => [`${value}`, "Alertas"]}
-                  labelFormatter={(label: string) => `Mes: ${label}`}
+                  formatter={(value?: string | number) =>
+                    [`${value ?? ""}`, "Alertas"] as const
+                  }
+                  labelFormatter={(label?: ReactNode) =>
+                    `Mes: ${typeof label === "string" ? label : ""}`
+                  }
                 />
                 <Line
                   type="monotone"
