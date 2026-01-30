@@ -407,7 +407,7 @@ export default function GroupsPage() {
     if (tab === "groups") {
       await deleteGroup({ companyId: cid, id: Number(item.id) });
     } else {
-      await deleteFleet({ companyId: cid, id: Number(item.id) });
+      await deleteFleet({ companyId: cid, fleetId: Number(item.id) });
     }
 
     await Swal.fire({
