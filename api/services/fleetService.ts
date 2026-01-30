@@ -33,7 +33,7 @@ export type FleetSummary = {
   description?: string | null;
 
   active: boolean;
-
+  createdAt?: string | null;
   vehicleCodes?: string[] | null;
   // opcional en summary (depende tu DTO)
   vehiclesCount?: number;
