@@ -61,7 +61,7 @@ export default function LoginPage() {
       });
 
       // ir al panel principal
-      router.replace("/app");
+      router.replace("/app/dashboard");
     } catch (err: unknown) {
       console.error("Error login:", err);
 
