@@ -8,6 +8,9 @@ import type { PageResponse } from "./notificationGroupService";
 const endpoint = "/api/alerts";
 
 // ========== DTOs que corresponden a los del backend ==========
+export type AlertCountResponse = {
+  total: number;
+};
 
 export type AlertDetail = {
   id: number;
@@ -101,6 +104,25 @@ export type UpdateAlertRequest = {
   details?: string | null;
   severity?: string | null;
   acknowledged?: boolean;
+};
+
+export type AlertSearchParams = {
+  companyId: number;
+
+  // filtros
+  types?: string[]; // ["IMPACTO","CHECKLIST"]
+  fleetId?: number;
+  groupId?: number;
+  ack?: boolean;
+
+  // rango ISO-8601 con zona (igual que backend)
+  from?: string; // "2026-01-26T00:00:00-05:00"
+  to?: string; // "2026-01-27T00:00:00-05:00"
+
+  // paginación
+  page?: number;
+  size?: number;
+  sort?: string; // opcional: "eventTime,desc"
 };
 
 // ========== SERVICES ==========
@@ -226,6 +248,38 @@ export const getAlertsByUser = async (params: {
       },
     }
   );
+
+  return response.data;
+};
+
+export const getAlertsCountByDay = async (params: {
+  companyId: number;
+  date: string; // "2026-01-26"
+  zone?: string; // default "America/Lima"
+}) => {
+  const response = await api.get<AlertCountResponse>(`${endpoint}/count`, {
+    params: {
+      companyId: params.companyId,
+      date: params.date,
+      zone: params.zone ?? "America/Lima",
+    },
+  });
+
+  return response.data;
+};
+
+// GET /api/alerts/search?companyId=...&types=IMPACTO,CHECKLIST&fleetId=...&groupId=...&ack=...&from=...&to=...&page=...&size=...
+export const searchAlerts = async (params: AlertSearchParams) => {
+  const { companyId, types, ...rest } = params;
+
+  const response = await api.get<PageResponse<AlertSummary>>(`${endpoint}/search`, {
+    params: {
+      companyId,
+      ...rest,
+      // backend espera CSV en "types"
+      ...(types && types.length > 0 ? { types: types.join(",") } : {}),
+    },
+  });
 
   return response.data;
 };

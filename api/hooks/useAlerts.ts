@@ -201,3 +201,63 @@ export const useAlertsByUser = (params: {
     ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
+
+export const useAlertsCountByDay = (params: {
+  companyId?: number;
+  date?: string; // "YYYY-MM-DD"
+  zone?: string;
+}) => {
+  const { companyId, date, zone } = params;
+
+  return useQuery<alertService.AlertCountResponse, Error>({
+    queryKey: ["alerts", "count", companyId, date, zone],
+    enabled: !!companyId && !!date,
+    queryFn: () =>
+      alertService.getAlertsCountByDay({
+        companyId: companyId as number,
+        date: date as string,
+        zone: zone ?? "America/Lima",
+      }),
+    // conteo no necesita refrescar cada 2s; puedes cambiarlo si quieres
+    staleTime: 10_000,
+    gcTime: 5 * 60 * 1000,
+  });
+};
+
+export const useAlertsSearch = (params: {
+  companyId?: number;
+
+  types?: string[];
+  fleetId?: number;
+  groupId?: number;
+  ack?: boolean;
+
+  from?: string;
+  to?: string;
+
+  page?: number;
+  size?: number;
+  sort?: string;
+}) => {
+  const { companyId } = params;
+
+  return useQuery<PageResponse<AlertSummary>, Error>({
+    queryKey: ["alerts", "search", params],
+    enabled: !!companyId,
+    queryFn: () =>
+      alertService.searchAlerts({
+        companyId: companyId as number,
+        types: params.types,
+        fleetId: params.fleetId,
+        groupId: params.groupId,
+        ack: params.ack,
+        from: params.from,
+        to: params.to,
+        page: params.page,
+        size: params.size,
+        sort: params.sort,
+      }),
+    placeholderData: keepPreviousData,
+    ...LIVE_LIST_QUERY_OPTIONS,
+  });
+};

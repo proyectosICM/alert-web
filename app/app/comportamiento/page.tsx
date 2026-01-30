@@ -13,7 +13,7 @@ import { stripHtml } from "@/lib/utils";
 // UI
 import { Button } from "@/components/ui/button";
 
-// ✅ Recharts (si no lo tienes: npm i recharts)
+// ✅ Recharts
 import {
   ResponsiveContainer,
   LineChart,
@@ -22,8 +22,10 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  BarChart,
+  Bar,
+  Legend,
 } from "recharts";
-import { count } from "console";
 
 type Mode = "EQUIPO" | "INFRAESTRUCTURA" | "OPERADOR";
 
@@ -111,8 +113,8 @@ function parseMonthKey(key: string) {
   return { y: Number(yStr), m: Number(mStr) };
 }
 function monthShortLabelFromKey(key: string) {
-  const { y, m } = parseMonthKey(key);
-  const date = new Date(y, (m || 1) - 1, 1);
+  const { m } = parseMonthKey(key);
+  const date = new Date(2000, (m || 1) - 1, 1);
   return new Intl.DateTimeFormat("es-PE", { month: "short" })
     .format(date)
     .replace(".", "");
@@ -121,7 +123,6 @@ function addMonths(base: Date, delta: number) {
   return new Date(base.getFullYear(), base.getMonth() + delta, 1);
 }
 function rangeMonthsAsc(endInclusive: Date, count: number) {
-  // devuelve keys en orden ASC: [end-(count-1) ... end]
   const keys: string[] = [];
   const start = addMonths(endInclusive, -(count - 1));
   for (let i = 0; i < count; i++) keys.push(monthKey(addMonths(start, i)));
@@ -131,6 +132,12 @@ function rangeMonthsAsc(endInclusive: Date, count: number) {
 type ChartPoint = {
   key: string;
   mes: string;
+  total: number;
+};
+
+// ✅ Para el gráfico de barras por equipo
+type VehicleBarPoint = {
+  equipo: string;
   total: number;
 };
 
@@ -152,6 +159,22 @@ export default function ComportamientoPage() {
   });
 
   const alerts: AlertSummary[] = useMemo(() => data?.content ?? [], [data]);
+
+  // ✅ Nuevo: conteo por EQUIPO (vehículo) con todas las alertas cargadas
+  const vehicleBarData: VehicleBarPoint[] = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const a of alerts) {
+      const label = getVehicleLabel(a);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+
+    // Orden: mayor a menor. Top 10 para que se vea bien.
+    return Array.from(counts.entries())
+      .map(([equipo, total]) => ({ equipo, total }))
+      .sort((a, b) => b.total - a.total || a.equipo.localeCompare(b.equipo, "es"))
+      .slice(0, 10);
+  }, [alerts]);
 
   // Opciones del combobox
   const options = useMemo(() => {
@@ -203,11 +226,11 @@ export default function ComportamientoPage() {
     router.push(`/app/comportamiento/revision/${id}`);
   };
 
-  // ✅ Datos para gráfico: conteo mensual de las alertas filtradas (últimos 6 meses)
+  // ✅ Datos para gráfico mensual (filtradas, últimos 6 meses)
   const chartData: ChartPoint[] = useMemo(() => {
     const now = new Date();
     const end = new Date(now.getFullYear(), now.getMonth(), 1);
-    const keys = rangeMonthsAsc(end, 6); // 6 meses
+    const keys = rangeMonthsAsc(end, 6);
 
     const counts = new Map<string, number>();
     for (const a of filteredAlerts) {
@@ -220,7 +243,7 @@ export default function ComportamientoPage() {
 
     return keys.map((k) => ({
       key: k,
-      mes: monthShortLabelFromKey(k), // eje X corto
+      mes: monthShortLabelFromKey(k),
       total: counts.get(k) ?? 0,
     }));
   }, [filteredAlerts]);
@@ -260,38 +283,117 @@ export default function ComportamientoPage() {
 
       {/* Selector modo (3 partes) */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
+        {/* Pestañas */}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <span className="text-xs font-medium text-slate-400">Sección</span>
-            <p className="mt-1 text-sm font-semibold text-slate-100">
-              {titleByMode[mode]}
-            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {(["EQUIPO", "INFRAESTRUCTURA", "OPERADOR"] as Mode[]).map((m) => {
+                const active = m === mode;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className={[
+                      "inline-flex items-center justify-center rounded-2xl border px-4 py-3 text-sm font-semibold transition-colors",
+                      "min-w-[140px] sm:min-w-[170px]",
+                      active
+                        ? "border-indigo-500/60 bg-indigo-600/15 text-indigo-100"
+                        : "border-slate-800 bg-slate-950/60 text-slate-200 hover:bg-slate-900",
+                    ].join(" ")}
+                  >
+                    {m === "EQUIPO"
+                      ? "Equipo"
+                      : m === "INFRAESTRUCTURA"
+                        ? "Infraestructura"
+                        : "Operador"}
+                  </button>
+                );
+              })}
+            </div>
+
+            <p className="text-sm font-semibold text-slate-100">{titleByMode[mode]}</p>
+          </div>
+        </div>
+
+        {/* ✅ NUEVO: Gráfico barras por equipo (Top 10) */}
+        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-slate-100">
+                Alertas por equipo (Top 10)
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Basado en las alertas cargadas (size=50) para este usuario.
+              </p>
+            </div>
+
+            <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
+              Equipos: {vehicleBarData.length}
+            </span>
           </div>
 
-          <div className="flex w-full gap-2 sm:w-auto">
-            {(["EQUIPO", "INFRAESTRUCTURA", "OPERADOR"] as Mode[]).map((m) => {
-              const active = m === mode;
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className={[
-                    "flex-1 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors sm:flex-none",
-                    active
-                      ? "border-indigo-500/60 bg-indigo-600/15 text-indigo-100"
-                      : "border-slate-800 bg-slate-950/60 text-slate-200 hover:bg-slate-900",
-                  ].join(" ")}
-                >
-                  {m === "EQUIPO"
-                    ? "Equipo"
-                    : m === "INFRAESTRUCTURA"
-                      ? "Infraestructura"
-                      : "Operador"}
-                </button>
-              );
-            })}
+          <div className="mt-3 h-[220px] w-full">
+            {vehicleBarData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-xs text-slate-400">
+                No hay datos para graficar.
+              </div>
+            ) : (
+              <div className="h-full w-full overflow-x-auto">
+                {/* ancho mínimo para que labels largos no se aplasten */}
+                <div className="h-full min-w-[680px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={vehicleBarData}
+                      margin={{ top: 10, right: 16, left: 0, bottom: 10 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                      <XAxis
+                        dataKey="equipo"
+                        tickLine={false}
+                        axisLine={false}
+                        interval={0}
+                        tick={{ fontSize: 11, fill: "#94a3b8" }}
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tickLine={false}
+                        axisLine={false}
+                        width={30}
+                        tick={{ fontSize: 11, fill: "#94a3b8" }}
+                      />
+                      <Tooltip
+                        formatter={(value?: string | number) =>
+                          [`${value ?? ""}`, "Alertas"] as const
+                        }
+                        labelFormatter={(label?: ReactNode) =>
+                          `Equipo: ${typeof label === "string" ? label : ""}`
+                        }
+                        contentStyle={{
+                          background: "rgba(2, 6, 23, 0.95)",
+                          border: "1px solid rgba(30, 41, 59, 1)",
+                          borderRadius: 12,
+                          color: "#e2e8f0",
+                          fontSize: 12,
+                        }}
+                        labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
+                      />
+                      <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
+
+                      <Bar dataKey="total" name="Alertas" radius={[10, 10, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </div>
+
+          <p className="mt-2 text-[11px] text-slate-500">
+            Si quieres que esto sea “real” (todo el histórico), conviene un endpoint
+            agregado en backend (count por vehículo).
+          </p>
         </div>
 
         {/* Combobox (select) */}
@@ -347,7 +449,7 @@ export default function ComportamientoPage() {
           </div>
         </div>
 
-        {/* ✅ Mini cuadro de estadísticas (línea con puntos) */}
+        {/* Mini cuadro de estadísticas (línea con puntos) */}
         <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -478,9 +580,7 @@ export default function ComportamientoPage() {
             return (
               <div
                 key={String(id ?? idx)}
-                className={`border-t border-slate-800 py-3 ${
-                  idx === 0 ? "first:border-t-0" : ""
-                }`}
+                className={`border-t border-slate-800 py-3 ${idx === 0 ? "first:border-t-0" : ""}`}
               >
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between gap-3">
@@ -490,20 +590,13 @@ export default function ComportamientoPage() {
                       </p>
                       <p className="text-[11px] text-slate-500">
                         {mode === "EQUIPO"
-                          ? `Planta: ${getPlantLabel(alert)} • Operador: ${getOperatorLabel(
-                              alert
-                            )}`
+                          ? `Planta: ${getPlantLabel(alert)} • Operador: ${getOperatorLabel(alert)}`
                           : mode === "INFRAESTRUCTURA"
-                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorLabel(
-                                alert
-                              )}`
-                            : `Vehículo: ${getVehicleLabel(alert)} • Planta: ${getPlantLabel(
-                                alert
-                              )}`}
+                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorLabel(alert)}`
+                            : `Vehículo: ${getVehicleLabel(alert)} • Planta: ${getPlantLabel(alert)}`}
                       </p>
                     </div>
 
-                    {/* ✅ Botón al lado de la severidad */}
                     <div className="flex items-center gap-2">
                       <Button
                         type="button"
