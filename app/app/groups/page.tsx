@@ -306,7 +306,7 @@ export default function GroupsPage() {
         });
       } else if (modalMode === "edit" && editingId) {
         await updateFleet({
-          id: Number(editingId),
+          fleetId: Number(editingId),
           data: {
             companyId: cid,
             name: name.trim(),
