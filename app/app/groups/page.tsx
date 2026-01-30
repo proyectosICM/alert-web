@@ -346,8 +346,13 @@ export default function GroupsPage() {
       });
     } else {
       await updateFleet({
-        id: Number(item.id),
-        data: { companyId: cid, active: newState },
+        fleetId: Number(editingId),
+        data: {
+          companyId: cid,
+          name: name.trim(),
+          description: desc.trim() || null,
+          vehicleCodes,
+        },
       });
     }
 
