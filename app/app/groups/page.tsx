@@ -338,7 +338,7 @@ export default function GroupsPage() {
     if (!cid) return;
 
     const newState = !item.isActive;
-
+    const vehicleCodes = parseVehicleCodes();
     if (tab === "groups") {
       await updateGroup({
         id: Number(item.id),
