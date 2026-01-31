@@ -206,19 +206,20 @@ export const useAlertsCountByDay = (params: {
   companyId?: number;
   date?: string; // "YYYY-MM-DD"
   zone?: string;
+  fleetId?: number;
 }) => {
-  const { companyId, date, zone } = params;
+  const { companyId, date, zone, fleetId } = params;
 
   return useQuery<alertService.AlertCountResponse, Error>({
-    queryKey: ["alerts", "count", companyId, date, zone],
+    queryKey: ["alerts", "count", companyId, date, zone, fleetId], // ✅ NUEVO
     enabled: !!companyId && !!date,
     queryFn: () =>
       alertService.getAlertsCountByDay({
         companyId: companyId as number,
         date: date as string,
         zone: zone ?? "America/Lima",
+        fleetId, // ✅ NUEVO
       }),
-    // conteo no necesita refrescar cada 2s; puedes cambiarlo si quieres
     staleTime: 10_000,
     gcTime: 5 * 60 * 1000,
   });

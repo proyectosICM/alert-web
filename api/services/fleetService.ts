@@ -1,3 +1,4 @@
+// src/api/services/fleetService.ts
 import api from "../apiClient";
 import type { PageResponse } from "./notificationGroupService";
 
@@ -8,6 +9,7 @@ import type { PageResponse } from "./notificationGroupService";
 const endpoint = "/api/fleets";
 
 // ========== DTOs ==========
+
 export type FleetDetail = {
   id: number;
 
@@ -19,8 +21,9 @@ export type FleetDetail = {
 
   active: boolean;
 
-  // en detalle normalmente sí quieres verlo
-  vehicleCodes?: string[]; // puede venir null si backend no lo manda en detail (depende tu DTO)
+  // ✅ nuevo modelo
+  vehiclePlates?: string[] | null; // principal
+  vehicleCodes?: string[] | null; // secundarios
 };
 
 export type FleetSummary = {
@@ -34,19 +37,25 @@ export type FleetSummary = {
 
   active: boolean;
   createdAt?: string | null;
+
+  // ✅ nuevo modelo
+  vehiclePlates?: string[] | null;
   vehicleCodes?: string[] | null;
+
   // opcional en summary (depende tu DTO)
   vehiclesCount?: number;
 };
 
 // ====== Requests (Create / Update) ======
+
 export type CreateFleetRequest = {
   companyId: number;
   name: string;
   description?: string | null;
   active?: boolean | null;
 
-  // opcional al crear
+  // ✅ nuevo modelo
+  vehiclePlates?: string[] | null;
   vehicleCodes?: string[] | null;
 };
 
@@ -57,12 +66,14 @@ export type UpdateFleetRequest = {
   description?: string | null;
   active?: boolean | null;
 
-  // si lo mandas aquí, tu backend lo usa como "replace"
+  // ✅ nuevo modelo (replace si lo mandas)
+  vehiclePlates?: string[] | null;
   vehicleCodes?: string[] | null;
 };
 
-export type VehicleCodesRequest = {
-  vehicleCodes: string[];
+export type VehicleIdentifiersRequest = {
+  vehiclePlates?: string[] | null;
+  vehicleCodes?: string[] | null;
 };
 
 // ========== SERVICES ==========
@@ -112,15 +123,23 @@ export const deleteFleet = async (companyId: number, fleetId: number) => {
   await api.delete(`${endpoint}/${fleetId}`, { params: { companyId } });
 };
 
+// =============================
+// VEHICLES (si tu backend los tiene)
+// =============================
+
 // POST /api/fleets/{id}/vehicles/add?companyId=...
 export const addFleetVehicles = async (params: {
   companyId: number;
   fleetId: number;
-  vehicleCodes: string[];
+  vehiclePlates?: string[];
+  vehicleCodes?: string[];
 }) => {
   const response = await api.post<FleetDetail>(
     `${endpoint}/${params.fleetId}/vehicles/add`,
-    { vehicleCodes: params.vehicleCodes } satisfies VehicleCodesRequest,
+    {
+      vehiclePlates: params.vehiclePlates ?? null,
+      vehicleCodes: params.vehicleCodes ?? null,
+    } satisfies VehicleIdentifiersRequest,
     { params: { companyId: params.companyId } }
   );
   return response.data;
@@ -130,11 +149,15 @@ export const addFleetVehicles = async (params: {
 export const removeFleetVehicles = async (params: {
   companyId: number;
   fleetId: number;
-  vehicleCodes: string[];
+  vehiclePlates?: string[];
+  vehicleCodes?: string[];
 }) => {
   const response = await api.post<FleetDetail>(
     `${endpoint}/${params.fleetId}/vehicles/remove`,
-    { vehicleCodes: params.vehicleCodes } satisfies VehicleCodesRequest,
+    {
+      vehiclePlates: params.vehiclePlates ?? null,
+      vehicleCodes: params.vehicleCodes ?? null,
+    } satisfies VehicleIdentifiersRequest,
     { params: { companyId: params.companyId } }
   );
   return response.data;
@@ -144,23 +167,40 @@ export const removeFleetVehicles = async (params: {
 export const replaceFleetVehicles = async (params: {
   companyId: number;
   fleetId: number;
-  vehicleCodes: string[];
+  vehiclePlates?: string[];
+  vehicleCodes?: string[];
 }) => {
   const response = await api.put<FleetDetail>(
     `${endpoint}/${params.fleetId}/vehicles`,
-    { vehicleCodes: params.vehicleCodes } satisfies VehicleCodesRequest,
+    {
+      vehiclePlates: params.vehiclePlates ?? null,
+      vehicleCodes: params.vehicleCodes ?? null,
+    } satisfies VehicleIdentifiersRequest,
     { params: { companyId: params.companyId } }
   );
   return response.data;
 };
 
-// GET /api/fleets/{id}/vehicles?companyId=...
-export const getFleetVehicleCodes = async (params: {
+/**
+ * ✅ NUEVO nombre: getFleetVehicleIdentifiers
+ * GET /api/fleets/{id}/vehicles?companyId=...
+ *
+ * OJO: Si tu backend aquí devuelve sólo string[], entonces cambia el tipo de retorno
+ * y elimina plates/codes. Ideal es que devuelva { vehiclePlates, vehicleCodes }.
+ */
+export const getFleetVehicleIdentifiers = async (params: {
   companyId: number;
   fleetId: number;
 }) => {
-  const response = await api.get<string[]>(`${endpoint}/${params.fleetId}/vehicles`, {
+  const response = await api.get<{
+    vehiclePlates?: string[] | null;
+    vehicleCodes?: string[] | null;
+  }>(`${endpoint}/${params.fleetId}/vehicles`, {
     params: { companyId: params.companyId },
   });
+
   return response.data;
 };
+
+// ✅ ALIAS para evitar tu error (compatibilidad con imports viejos)
+export const getFleetVehicleCodes = getFleetVehicleIdentifiers;

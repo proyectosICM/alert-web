@@ -14,19 +14,26 @@ export type PageResponse<T> = {
   last: boolean;
 };
 
-// === DTOs de front (equivalentes a tus DTOs de backend) ===
 // Backend: GroupSummaryDto
 export type NotificationGroupSummary = {
   id: number;
   companyId: number;
   companyName?: string | null;
+
   name: string;
   description?: string | null;
   createdAt?: string | null;
+
   usersCount: number;
-  vehiclesCount: number;
+
+  // (opcional, depende de tu DTO real)
+  vehiclesCount?: number;
+
   alertsLast24h: number;
   active: boolean;
+
+  // ✅ nuevo modelo: placas principal, códigos opcional
+  vehiclePlates?: string[];
   vehicleCodes?: string[];
 };
 
@@ -35,12 +42,17 @@ export type NotificationGroupDetail = {
   id: number;
   companyId: number;
   companyName?: string | null;
+
   name: string;
   description?: string | null;
   createdAt?: string | null;
+
   active: boolean;
   usersCount: number;
   alertsLast24h: number;
+
+  // ✅ nuevo
+  vehiclePlates?: string[];
   vehicleCodes?: string[];
 };
 
@@ -50,15 +62,22 @@ export type CreateNotificationGroupRequest = {
   name: string;
   description?: string | null;
   active?: boolean;
+
+  // ✅ nuevo
+  vehiclePlates?: string[];
   vehicleCodes?: string[];
 };
 
 // UpdateGroupRequest (companyId en el body)
 export type UpdateNotificationGroupRequest = {
   companyId: number;
+
   name?: string;
   description?: string | null;
   active?: boolean;
+
+  // ✅ nuevo
+  vehiclePlates?: string[];
   vehicleCodes?: string[];
 };
 
@@ -87,7 +106,6 @@ export const getNotificationGroupById = async (companyId: number, id: number) =>
 
 // ============== CREATE ==============
 // POST /api/notification-groups
-// companyId va en el payload
 export const createNotificationGroup = async (
   payload: CreateNotificationGroupRequest
 ) => {
@@ -97,7 +115,6 @@ export const createNotificationGroup = async (
 
 // ============== UPDATE (PATCH) ==============
 // PATCH /api/notification-groups/{id}
-// companyId va en el payload
 export const updateNotificationGroup = async (
   id: number,
   payload: UpdateNotificationGroupRequest

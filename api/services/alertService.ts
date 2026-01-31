@@ -256,14 +256,18 @@ export const getAlertsCountByDay = async (params: {
   companyId: number;
   date: string; // "2026-01-26"
   zone?: string; // default "America/Lima"
+  fleetId?: number;
 }) => {
   const response = await api.get<AlertCountResponse>(`${endpoint}/count`, {
     params: {
       companyId: params.companyId,
       date: params.date,
       zone: params.zone ?? "America/Lima",
+      ...(params.fleetId != null ? { fleetId: params.fleetId } : {}),
     },
   });
+
+  console.log(`${endpoint}/count`);
 
   return response.data;
 };

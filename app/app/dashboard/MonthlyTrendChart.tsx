@@ -20,7 +20,6 @@ export type MonthlyTrendPoint = {
   impacto: number;
   frenada: number;
   aceleracion: number;
-  total: number;
 };
 
 type Props = {
@@ -89,8 +88,7 @@ export default function MonthlyTrendChart({
                 />
                 <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
 
-                {/* Barras agrupadas por mes */}
-                <Bar dataKey="total" name="Total" fill="#e2e8f0" radius={[8, 8, 0, 0]} />
+                {/* Barras agrupadas por mes (solo 3 tipos) */}
                 <Bar
                   dataKey="impacto"
                   name="Impacto"

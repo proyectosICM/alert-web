@@ -45,6 +45,9 @@ type BaseItem = {
   description?: string;
   createdAt: string; // ISO o ""
   isActive: boolean;
+
+  // ✅ nuevo: placas principal + codes secundario
+  vehiclePlates: string[];
   vehicleCodes: string[];
 };
 
@@ -74,6 +77,28 @@ function formatDateLong(iso?: string) {
   return `${day}/${month}/${year}`;
 }
 
+function uniqueList(arr: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of arr) {
+    const v = (x ?? "").trim();
+    if (!v) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function pickDisplayVehicles(plates: string[], codes: string[]) {
+  // mostrar placas si existen; si no, mostrar códigos
+  const p = uniqueList(plates);
+  if (p.length > 0) return { label: "Placas", list: p };
+
+  const c = uniqueList(codes);
+  return { label: "Códigos", list: c };
+}
+
 export default function GroupsPage() {
   const auth = getAuthDataWeb();
   const companyId = auth?.companyId;
@@ -89,6 +114,9 @@ export default function GroupsPage() {
 
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+
+  // ✅ nuevo: 2 inputs separados
+  const [vehiclePlatesText, setVehiclePlatesText] = useState("");
   const [vehicleCodesText, setVehicleCodesText] = useState("");
 
   // paginación básica
@@ -126,7 +154,10 @@ export default function GroupsPage() {
       createdAt: g.createdAt ?? "",
       usersCount: g.usersCount ?? 0,
       alertsLast24h: g.alertsLast24h ?? 0,
-      isActive: g.active,
+      isActive: !!g.active,
+
+      // ✅ nuevo
+      vehiclePlates: g.vehiclePlates ?? [],
       vehicleCodes: g.vehicleCodes ?? [],
     }));
   }, [groupsQuery.data]);
@@ -134,15 +165,22 @@ export default function GroupsPage() {
   const fleets: FleetItem[] = useMemo(() => {
     if (!fleetsQuery.data) return [];
     return (fleetsQuery.data.content as FleetSummary[]).map((f) => {
+      const plates = f.vehiclePlates ?? [];
       const codes = f.vehicleCodes ?? [];
+      // count lógico: cuántos vehículos "principales" (placas) y si no hay placas, por códigos
+      const display = pickDisplayVehicles(plates, codes);
+
       return {
         id: String(f.id),
         name: f.name,
         description: f.description ?? undefined,
         createdAt: f.createdAt ?? "",
         isActive: !!f.active,
+
+        vehiclePlates: plates,
         vehicleCodes: codes,
-        vehiclesCount: codes.length,
+
+        vehiclesCount: display.list.length,
       };
     });
   }, [fleetsQuery.data]);
@@ -199,8 +237,8 @@ export default function GroupsPage() {
     return companyId;
   };
 
-  const parseVehicleCodes = () =>
-    vehicleCodesText
+  const parseCsv = (text: string) =>
+    text
       .split(",")
       .map((c) => c.trim())
       .filter((c) => c.length > 0);
@@ -210,6 +248,7 @@ export default function GroupsPage() {
     setEditingId(null);
     setName("");
     setDesc("");
+    setVehiclePlatesText("");
     setVehicleCodesText("");
     setIsModalOpen(true);
   };
@@ -219,6 +258,7 @@ export default function GroupsPage() {
     setEditingId(item.id);
     setName(item.name);
     setDesc(item.description ?? "");
+    setVehiclePlatesText(item.vehiclePlates.join(", "));
     setVehicleCodesText(item.vehicleCodes.join(", "));
     setIsModalOpen(true);
   };
@@ -234,7 +274,8 @@ export default function GroupsPage() {
     const cid = await ensureCompanyIdOrToast();
     if (!cid) return;
 
-    const vehicleCodes = parseVehicleCodes();
+    const vehiclePlates = parseCsv(vehiclePlatesText);
+    const vehicleCodes = parseCsv(vehicleCodesText);
 
     if (tab === "groups") {
       if (modalMode === "create") {
@@ -243,6 +284,11 @@ export default function GroupsPage() {
           name: name.trim(),
           description: desc.trim() || undefined,
           active: true,
+
+          // ✅ principal
+          vehiclePlates: vehiclePlates.length > 0 ? vehiclePlates : undefined,
+
+          // ✅ opcional
           vehicleCodes: vehicleCodes.length > 0 ? vehicleCodes : undefined,
         });
 
@@ -265,6 +311,9 @@ export default function GroupsPage() {
             companyId: cid,
             name: name.trim(),
             description: desc.trim() || undefined,
+
+            // PATCH replace: si queda vacío => []
+            vehiclePlates: vehiclePlates.length > 0 ? vehiclePlates : [],
             vehicleCodes: vehicleCodes.length > 0 ? vehicleCodes : [],
           },
         });
@@ -289,6 +338,11 @@ export default function GroupsPage() {
           name: name.trim(),
           description: desc.trim() || null,
           active: true,
+
+          // ✅ principal
+          vehiclePlates: vehiclePlates.length > 0 ? vehiclePlates : null,
+
+          // ✅ opcional
           vehicleCodes: vehicleCodes.length > 0 ? vehicleCodes : null,
         });
 
@@ -311,6 +365,9 @@ export default function GroupsPage() {
             companyId: cid,
             name: name.trim(),
             description: desc.trim() || null,
+
+            // replace en PATCH: manda arrays (vacío => limpiar)
+            vehiclePlates,
             vehicleCodes,
           },
         });
@@ -338,21 +395,17 @@ export default function GroupsPage() {
     if (!cid) return;
 
     const newState = !item.isActive;
-    const vehicleCodes = parseVehicleCodes();
+
     if (tab === "groups") {
       await updateGroup({
         id: Number(item.id),
         data: { companyId: cid, active: newState },
       });
     } else {
+      // ✅ FIX: para flotas solo patch active, no uses editingId
       await updateFleet({
-        fleetId: Number(editingId),
-        data: {
-          companyId: cid,
-          name: name.trim(),
-          description: desc.trim() || null,
-          vehicleCodes,
-        },
+        fleetId: Number(item.id),
+        data: { companyId: cid, active: newState },
       });
     }
 
@@ -432,9 +485,7 @@ export default function GroupsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col pb-16 md:pb-4">
-      {/* ===== Layout: Sidebar + Content ===== */}
       <div className="flex min-h-0 flex-1 gap-3">
-        {/* ===== Sidebar tabs (desktop) ===== */}
         <aside className="hidden min-h-0 w-60 flex-col rounded-2xl border border-slate-800 bg-slate-950/70 p-2 shadow-sm sm:flex">
           <div className="px-2 py-2">
             <div className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
@@ -470,9 +521,7 @@ export default function GroupsPage() {
           </div>
         </aside>
 
-        {/* ===== Content ===== */}
         <main className="flex min-h-0 flex-1 flex-col space-y-4">
-          {/* Mobile tabs (fallback) */}
           <div className="sm:hidden">
             <div className="inline-flex w-full gap-1 rounded-2xl border border-slate-800 bg-slate-950/70 p-1">
               <TopTabButton active={tab === "groups"} onClick={() => setTab("groups")}>
@@ -486,7 +535,6 @@ export default function GroupsPage() {
             </div>
           </div>
 
-          {/* Header */}
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               {tab === "groups" ? (
@@ -508,7 +556,7 @@ export default function GroupsPage() {
                 <span className="text-xs font-medium text-slate-400">
                   Total {tab === "groups" ? "grupos" : "flotas"}
                 </span>
-                <Building2 className="w-4t4 h-4 text-slate-500" />
+                <Building2 className="h-4 w-4 text-slate-500" />
               </div>
               <p className="mt-2 text-2xl font-semibold text-slate-50">
                 {isLoading ? "…" : total}
@@ -544,7 +592,7 @@ export default function GroupsPage() {
               <p className="mt-1 text-[11px] text-slate-500">
                 {tab === "groups"
                   ? "Usuarios vinculados a todos los grupos."
-                  : "Total de códigos asignados en todas las flotas."}
+                  : "Total de vehículos mostrados (placas o códigos)."}
               </p>
             </div>
           </section>
@@ -552,7 +600,6 @@ export default function GroupsPage() {
           {/* Filtros + botón nuevo */}
           <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              {/* búsqueda */}
               <div className="relative w-full sm:w-72">
                 <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
                   <Search className="h-4 w-4 text-slate-500" />
@@ -603,7 +650,6 @@ export default function GroupsPage() {
                 </span>
               </div>
 
-              {/* Toggle vista */}
               <div className="hidden items-center gap-1 text-xs text-slate-500 sm:flex">
                 <span className="mr-1">Vista:</span>
                 <button
@@ -651,7 +697,7 @@ export default function GroupsPage() {
                         Descripción
                       </th>
                       <th className="border-b border-slate-800 px-4 py-2 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
-                        Montacargas
+                        Vehículos
                       </th>
 
                       {tab === "groups" ? (
@@ -685,8 +731,13 @@ export default function GroupsPage() {
                     {!isLoading && hasItems && (
                       <>
                         {items.map((it, idx) => {
-                          const codesPreview = it.vehicleCodes.slice(0, 3).join(", ");
-                          const hasMoreCodes = it.vehicleCodes.length > 3;
+                          const display = pickDisplayVehicles(
+                            it.vehiclePlates,
+                            it.vehicleCodes
+                          );
+
+                          const preview = display.list.slice(0, 3).join(", ");
+                          const hasMore = display.list.length > 3;
 
                           const groupExtra = tab === "groups" ? (it as GroupItem) : null;
                           const fleetExtra = tab === "fleets" ? (it as FleetItem) : null;
@@ -716,14 +767,17 @@ export default function GroupsPage() {
                               </td>
 
                               <td className="border-b border-slate-900 px-4 py-2 align-top text-xs">
-                                {it.vehicleCodes.length > 0 ? (
+                                {display.list.length > 0 ? (
                                   <span className="text-[11px] text-slate-200">
-                                    {codesPreview}
-                                    {hasMoreCodes && "…"}
+                                    <span className="mr-1 text-slate-500">
+                                      {display.label}:
+                                    </span>
+                                    {preview}
+                                    {hasMore && "…"}
                                   </span>
                                 ) : (
                                   <span className="text-[11px] text-slate-500">
-                                    Sin montacargas
+                                    Sin vehículos
                                   </span>
                                 )}
                               </td>
@@ -749,7 +803,7 @@ export default function GroupsPage() {
                                 </>
                               ) : (
                                 <td className="border-b border-slate-900 px-4 py-2 align-top text-xs text-slate-200">
-                                  {fleetExtra?.vehiclesCount ?? it.vehicleCodes.length}
+                                  {fleetExtra?.vehiclesCount ?? display.list.length}
                                 </td>
                               )}
 
@@ -871,6 +925,11 @@ export default function GroupsPage() {
                       const groupExtra = tab === "groups" ? (it as GroupItem) : null;
                       const fleetExtra = tab === "fleets" ? (it as FleetItem) : null;
 
+                      const display = pickDisplayVehicles(
+                        it.vehiclePlates,
+                        it.vehicleCodes
+                      );
+
                       return (
                         <div
                           key={it.id}
@@ -903,25 +962,30 @@ export default function GroupsPage() {
                                 </p>
                               )}
 
-                              {it.vehicleCodes.length > 0 ? (
-                                <div className="mt-2 flex flex-wrap gap-1">
-                                  {it.vehicleCodes.slice(0, 6).map((code) => (
-                                    <span
-                                      key={code}
-                                      className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[10px] text-slate-200"
-                                    >
-                                      {code}
-                                    </span>
-                                  ))}
-                                  {it.vehicleCodes.length > 6 && (
-                                    <span className="text-[10px] text-slate-500">
-                                      +{it.vehicleCodes.length - 6} más
-                                    </span>
-                                  )}
+                              {display.list.length > 0 ? (
+                                <div className="mt-2">
+                                  <div className="text-[10px] text-slate-500">
+                                    {display.label}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {display.list.slice(0, 6).map((v) => (
+                                      <span
+                                        key={v}
+                                        className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[10px] text-slate-200"
+                                      >
+                                        {v}
+                                      </span>
+                                    ))}
+                                    {display.list.length > 6 && (
+                                      <span className="text-[10px] text-slate-500">
+                                        +{display.list.length - 6} más
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               ) : (
                                 <p className="mt-2 text-[11px] text-slate-500">
-                                  Sin montacargas asignados
+                                  Sin vehículos asignados
                                 </p>
                               )}
                             </div>
@@ -974,10 +1038,9 @@ export default function GroupsPage() {
                               </>
                             ) : (
                               <span>
-                                {fleetExtra?.vehiclesCount ?? it.vehicleCodes.length}{" "}
+                                {fleetExtra?.vehiclesCount ?? display.list.length}{" "}
                                 vehículo
-                                {(fleetExtra?.vehiclesCount ?? it.vehicleCodes.length) ===
-                                1
+                                {(fleetExtra?.vehiclesCount ?? display.list.length) === 1
                                   ? ""
                                   : "s"}
                               </span>
@@ -1030,97 +1093,101 @@ export default function GroupsPage() {
               )}
 
               {!isLoading &&
-                items.map((it) => (
-                  <div key={it.id} className="px-3 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded-full bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-slate-400">
-                            {it.id}
-                          </span>
-                          {it.isActive ? (
-                            <span className="rounded-full border border-emerald-700/60 bg-emerald-900/50 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-                              Activo
+                items.map((it) => {
+                  const display = pickDisplayVehicles(it.vehiclePlates, it.vehicleCodes);
+
+                  return (
+                    <div key={it.id} className="px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="rounded-full bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-slate-400">
+                              {it.id}
                             </span>
-                          ) : (
-                            <span className="rounded-full border border-slate-700/60 bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-slate-400">
-                              Inactivo
-                            </span>
+                            {it.isActive ? (
+                              <span className="rounded-full border border-emerald-700/60 bg-emerald-900/50 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                                Activo
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-slate-700/60 bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+                                Inactivo
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-xs font-medium text-slate-100">{it.name}</p>
+
+                          {it.description && (
+                            <p className="line-clamp-2 text-xs text-slate-300">
+                              {it.description}
+                            </p>
                           )}
                         </div>
 
-                        <p className="text-xs font-medium text-slate-100">{it.name}</p>
+                        <div className="flex flex-col gap-1 text-[11px] text-slate-400">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(it)}
+                            className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-indigo-500 hover:text-indigo-300"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleActive(it)}
+                            className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-amber-500 hover:text-amber-300"
+                          >
+                            <Power className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isDeleting}
+                            onClick={() => handleDelete(it)}
+                            className={cn(
+                              "inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-rose-500 hover:text-rose-300",
+                              isDeleting && "cursor-not-allowed opacity-60"
+                            )}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
 
-                        {it.description && (
-                          <p className="line-clamp-2 text-xs text-slate-300">
-                            {it.description}
-                          </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                        <span>Desde {formatDateShort(it.createdAt)}</span>
+                        {display.list.length > 0 && (
+                          <>
+                            <span>•</span>
+                            <span>
+                              {display.label}: {display.list.slice(0, 3).join(", ")}
+                              {display.list.length > 3 && "…"}
+                            </span>
+                          </>
                         )}
                       </div>
 
-                      <div className="flex flex-col gap-1 text-[11px] text-slate-400">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(it)}
-                          className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-indigo-500 hover:text-indigo-300"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleActive(it)}
-                          className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-amber-500 hover:text-amber-300"
-                        >
-                          <Power className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isDeleting}
-                          onClick={() => handleDelete(it)}
-                          className={cn(
-                            "inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-1.5 py-1 hover:border-rose-500 hover:text-rose-300",
-                            isDeleting && "cursor-not-allowed opacity-60"
-                          )}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                      <div className="mt-2">
+                        {tab === "groups" ? (
+                          <Link
+                            href={`/app/groups/${it.id}`}
+                            className="inline-flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-100 hover:border-indigo-500 hover:text-indigo-300"
+                          >
+                            <Users className="h-3.5 w-3.5" />
+                            <span>Usuarios del grupo</span>
+                          </Link>
+                        ) : (
+                          <Link
+                            href={`/app/fleets/${it.id}`}
+                            className="inline-flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-100 hover:border-indigo-500 hover:text-indigo-300"
+                          >
+                            <Layers className="h-3.5 w-3.5" />
+                            <span>Detalle de flota</span>
+                          </Link>
+                        )}
                       </div>
                     </div>
-
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                      <span>Desde {formatDateShort(it.createdAt)}</span>
-                      {it.vehicleCodes.length > 0 && (
-                        <>
-                          <span>•</span>
-                          <span>
-                            Montacargas: {it.vehicleCodes.slice(0, 3).join(", ")}
-                            {it.vehicleCodes.length > 3 && "…"}
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="mt-2">
-                      {tab === "groups" ? (
-                        <Link
-                          href={`/app/groups/${it.id}`}
-                          className="inline-flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-100 hover:border-indigo-500 hover:text-indigo-300"
-                        >
-                          <Users className="h-3.5 w-3.5" />
-                          <span>Usuarios del grupo</span>
-                        </Link>
-                      ) : (
-                        <Link
-                          href={`/app/fleets/${it.id}`}
-                          className="inline-flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-100 hover:border-indigo-500 hover:text-indigo-300"
-                        >
-                          <Layers className="h-3.5 w-3.5" />
-                          <span>Detalle de flota</span>
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
             </div>
           </section>
 
@@ -1138,9 +1205,9 @@ export default function GroupsPage() {
                         : `${tab === "groups" ? "Editar grupo" : "Editar flota"} #${editingId}`}
                     </h2>
                     <p className="mt-1 text-[11px] text-slate-400">
-                      Define un nombre claro y los códigos de montacargas que pertenecen a
-                      este
-                      {tab === "groups" ? " grupo" : "a flota"}.
+                      Define un nombre claro y asigna los vehículos usando{" "}
+                      <span className="text-slate-200">placas</span> (principal) y{" "}
+                      <span className="text-slate-200">códigos</span> (opcional).
                     </p>
                   </div>
                   <button
@@ -1176,25 +1243,42 @@ export default function GroupsPage() {
                       value={desc}
                       onChange={(e) => setDesc(e.target.value)}
                       rows={2}
-                      placeholder="Ej. Montacargas del almacén principal."
+                      placeholder="Ej. Vehículos del almacén principal."
                       className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                     />
                   </div>
 
+                  {/* ✅ principal: placas */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-medium text-slate-300">
-                      Códigos de montacargas
+                      Placas (principal)
+                    </label>
+                    <input
+                      type="text"
+                      value={vehiclePlatesText}
+                      onChange={(e) => setVehiclePlatesText(e.target.value)}
+                      placeholder="FG-22010, A7B-123, XYZ-999…"
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Separa por coma. Se usarán para filtros y conteos.
+                    </p>
+                  </div>
+
+                  {/* ✅ secundario: códigos */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-medium text-slate-300">
+                      Códigos internos (opcional)
                     </label>
                     <input
                       type="text"
                       value={vehicleCodesText}
                       onChange={(e) => setVehicleCodesText(e.target.value)}
-                      placeholder="MG001, MG002, MG003…"
+                      placeholder="MG001, MG002, H2X394Y…"
                       className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                     />
                     <p className="text-[10px] text-slate-500">
-                      Separa los códigos por coma. Solo se consideran los códigos no
-                      vacíos.
+                      Útil si algún vehículo no tiene placa o para compatibilidad.
                     </p>
                   </div>
 

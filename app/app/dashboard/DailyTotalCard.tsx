@@ -14,11 +14,14 @@ import { Calendar } from "@/components/ui/calendar";
 type Props = {
   companyId: number;
   zone?: string; // default: America/Lima
-  // cuando tengas backend:
-  // fleetId?: number;
+  fleetId?: number; // ✅ NUEVO (opcional)
 };
 
-export default function DailyTotalCard({ companyId, zone = "America/Lima" }: Props) {
+export default function DailyTotalCard({
+  companyId,
+  zone = "America/Lima",
+  fleetId,
+}: Props) {
   // Selector de fecha (calendar)
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [openDate, setOpenDate] = useState(false);
@@ -55,8 +58,7 @@ export default function DailyTotalCard({ companyId, zone = "America/Lima" }: Pro
     companyId,
     date: selectedDateStr,
     zone,
-    // 👇 cuando tengas backend:
-    // fleetId,
+    fleetId,
   });
 
   const totalForSelectedDay = countData?.total ?? 0;

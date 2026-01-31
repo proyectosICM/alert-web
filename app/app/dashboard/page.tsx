@@ -12,7 +12,7 @@ import {
   ChevronsUpDown,
 } from "lucide-react";
 
-import { useAlertsByUser } from "@/api/hooks/useAlerts";
+import { useAlertsByUser, useAlertsSearch } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { cn, stripHtml } from "@/lib/utils";
@@ -62,6 +62,26 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
   return "LOW";
 }
 
+// ====== Helpers fechas (Lima) ======
+function addMonths(base: Date, delta: number) {
+  return new Date(base.getFullYear(), base.getMonth() + delta, 1);
+}
+
+// inicio del mes en ISO con zona Lima (fijo -05:00)
+function toISOStartOfMonthLima(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01T00:00:00-05:00`;
+}
+
+// calcula inicio del trimestre (Q) para un anchorMonth
+function getQuarterStart(anchorMonth: Date) {
+  const y = anchorMonth.getFullYear();
+  const m = anchorMonth.getMonth();
+  const qStartMonth = Math.floor(m / 3) * 3;
+  return new Date(y, qStartMonth, 1);
+}
+
 export default function AppHome() {
   const router = useRouter();
 
@@ -93,8 +113,51 @@ export default function AppHome() {
     return f?.name ?? "Todas";
   }, [fleetFilter, fleets]);
 
-  // Alertas
-  const { data, isLoading, isError, error } = useAlertsByUser({
+  // ==========================
+  // ✅ Anchor del trimestre (TABLA + CHART)
+  // ==========================
+  const [anchorMonth, setAnchorMonth] = useState<Date>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  const quarterStart = useMemo(() => getQuarterStart(anchorMonth), [anchorMonth]);
+  // ✅ FIX: quarterEnd no se usa -> lo quitamos (evita no-unused-vars)
+  // const quarterEnd = useMemo(() => addMonths(quarterStart, 3), [quarterStart]);
+
+  // ✅ CAMBIO MÍNIMO: el query debe traer EXACTAMENTE los 3 meses que muestra la tabla
+  // tabla = [anchorMonth, anchorMonth-1, anchorMonth-2]
+  // from = inicio de (anchorMonth - 2)
+  // to   = inicio de (anchorMonth + 1)  (exclusivo)
+  const rangeStart = useMemo(() => addMonths(anchorMonth, -2), [anchorMonth]);
+  const rangeEnd = useMemo(() => addMonths(anchorMonth, +1), [anchorMonth]);
+
+  const from = useMemo(() => toISOStartOfMonthLima(rangeStart), [rangeStart]);
+  const to = useMemo(() => toISOStartOfMonthLima(rangeEnd), [rangeEnd]);
+
+  // ==========================
+  // ✅ Alertas para TABLA/CHART (RANGO VISIBLE: 3 meses)
+  // ==========================
+  const quarterAlertsQuery = useAlertsSearch({
+    companyId,
+    from,
+    to,
+    page: 0,
+    size: 5000, // ajusta según volumen
+    sort: "eventTime,asc",
+    // de momento sin flota:
+    // fleetId: fleetFilter === "ALL" ? undefined : Number(fleetFilter),
+  });
+
+  const alertsForTable: AlertSummary[] = useMemo(() => {
+    const raw = quarterAlertsQuery.data?.content;
+    return Array.isArray(raw) ? raw : [];
+  }, [quarterAlertsQuery.data]);
+
+  // ==========================
+  // ✅ Alertas para “Últimas alertas” (rápido)
+  // ==========================
+  const latestQuery = useAlertsByUser({
     companyId,
     userId,
     page: 0,
@@ -103,11 +166,10 @@ export default function AppHome() {
     // fleetId: fleetFilter === "ALL" ? undefined : Number(fleetFilter),
   });
 
-  // ✅ SIEMPRE array (evita el “not iterable” incluso si data cambia raro)
-  const alerts: AlertSummary[] = useMemo(() => {
-    const raw = data?.content;
+  const latestAlerts: AlertSummary[] = useMemo(() => {
+    const raw = latestQuery.data?.content;
     return Array.isArray(raw) ? raw : [];
-  }, [data]);
+  }, [latestQuery.data]);
 
   const handleGoHistory = () => router.push("/app/alerts");
   const handleGoSettings = () => router.push("/app/settings");
@@ -260,11 +322,18 @@ export default function AppHome() {
         </div>
 
         {/* TOTAL + FECHA */}
-        <DailyTotalCard companyId={companyId} />
+        <DailyTotalCard
+          companyId={companyId}
+          fleetId={fleetFilter === "ALL" ? undefined : Number(fleetFilter)}
+        />
 
-        {/* TABLA + lógica */}
+        {/* TABLA (usa alerts reales del rango visible) */}
         <MonthlySummaryTable
-          alerts={alerts}
+          alerts={alertsForTable}
+          anchorMonth={anchorMonth}
+          onAnchorChange={setAnchorMonth}
+          isLoading={quarterAlertsQuery.isLoading}
+          isError={quarterAlertsQuery.isError}
           onDerivedChange={(d: MonthlyDerivedPayload) => {
             setChartData(d.monthlyChartData);
             setTableHeaderLabel(d.tableHeaderLabel);
@@ -311,7 +380,7 @@ export default function AppHome() {
         </div>
       </section>
 
-      {/* Últimas alertas */}
+      {/* Últimas alertas (size=5) */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -327,34 +396,37 @@ export default function AppHome() {
           </div>
         </div>
 
-        {isLoading && (
+        {latestQuery.isLoading && (
           <div className="flex flex-col items-center justify-center py-6 text-xs text-slate-400 sm:text-sm">
             <div className="h-4 w-4 animate-spin rounded-full border border-slate-500 border-t-transparent" />
             <span className="mt-3">Cargando últimas alertas…</span>
           </div>
         )}
 
-        {isError && !isLoading && (
+        {latestQuery.isError && !latestQuery.isLoading && (
           <div className="flex flex-col items-center justify-center py-6 text-center">
             <AlertCircle className="h-6 w-6 text-rose-400" />
             <p className="mt-2 text-sm font-medium text-rose-200">
               Error al obtener alertas
             </p>
             <p className="mt-1 max-w-md text-xs text-slate-500">
-              {error?.message ?? "Revisa la conexión con el servidor."}
+              {/* ✅ FIX: quitar `any` */}
+              {latestQuery.error instanceof Error
+                ? latestQuery.error.message
+                : "Revisa la conexión con el servidor."}
             </p>
           </div>
         )}
 
-        {!isLoading && !isError && alerts.length === 0 && (
+        {!latestQuery.isLoading && !latestQuery.isError && latestAlerts.length === 0 && (
           <div className="flex flex-col items-center justify-center py-6 text-center text-xs text-slate-400 sm:text-sm">
             <p>No hay alertas recientes.</p>
           </div>
         )}
 
-        {!isLoading &&
-          !isError &&
-          alerts.map((alert, idx) => {
+        {!latestQuery.isLoading &&
+          !latestQuery.isError &&
+          latestAlerts.map((alert, idx) => {
             const licensePlate = stripHtml(alert.licensePlate);
             const vehicleCode = stripHtml(alert.vehicleCode);
             const shortDescription = stripHtml(alert.shortDescription);

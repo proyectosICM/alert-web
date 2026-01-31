@@ -1,11 +1,9 @@
-// app/(app)/MonthlySummaryTable.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import type { AlertSummary } from "@/api/services/alertService";
-import { stripHtml } from "@/lib/utils";
 import type { MonthlyTrendPoint } from "./MonthlyTrendChart";
 
 // ✅ Ahora por tipo de alerta
@@ -19,14 +17,41 @@ type Derived = {
 
 type Props = {
   alerts?: AlertSummary[] | null;
+
+  // ✅ controlado desde el padre (page.tsx)
+  anchorMonth: Date;
+  onAnchorChange: (next: Date) => void;
+
+  // opcional: estado del query del rango visible
+  isLoading?: boolean;
+  isError?: boolean;
+
   onDerivedChange?: (derived: Derived) => void;
 };
 
+const LIMA_TZ = "America/Lima";
+
 // ===== helpers fechas =====
-function monthKey(d: Date) {
-  const y = d.getFullYear();
-  const m = d.getMonth() + 1;
-  return `${y}-${String(m).padStart(2, "0")}`;
+
+// ✅ FIX: obtiene "YYYY-MM" calculado EN LIMA (no depende del offset del string)
+function monthKeyFromEventTimeInZone(eventTime?: string | null, timeZone = LIMA_TZ) {
+  if (!eventTime || typeof eventTime !== "string") return null;
+
+  const dt = new Date(eventTime);
+  if (Number.isNaN(dt.getTime())) return null;
+
+  // Usamos formatToParts para construir YYYY-MM en el timezone deseado
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(dt);
+
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+
+  if (!y || !m) return null;
+  return `${y}-${m}`; // "YYYY-MM"
 }
 
 function parseMonthKey(key: string) {
@@ -50,7 +75,9 @@ function rangeMonths(start: Date, count: number) {
   const keys: string[] = [];
   for (let i = 0; i < count; i++) {
     const d = addMonths(start, -i);
-    keys.push(monthKey(d));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    keys.push(`${y}-${m}`);
   }
   return keys;
 }
@@ -86,25 +113,25 @@ function normalizeType(raw?: string | null) {
 function mapToTypeCol(rawType?: string | null): AlertTypeCol {
   const t = normalizeType(rawType);
 
-  // Ajusta aquí si tienes más variantes en BD
   if (t.includes("IMPACT")) return "IMPACTO";
   if (t.includes("FRENAD")) return "FRENADA";
   if (t.includes("ACELER")) return "ACELERACION";
 
-  // Si cae algo distinto (CHECKLIST, EXCESO_VELOCIDAD, etc.)
-  // puedes decidir: ignorarlo o mandarlo a IMPACTO por default.
-  // Yo lo dejo como IMPACTO para que no desaparezca del resumen:
+  // Si cae algo distinto, lo mandamos a IMPACTO para que no “desaparezca”
   return "IMPACTO";
 }
 
 function getAlertType(a: AlertSummary): string | null {
   const x = a as AlertLike;
-  // prioridad típica: alertType -> type -> alert_type
   return x.alertType ?? x.type ?? x.alert_type ?? null;
 }
 
 export default function MonthlySummaryTable({
   alerts: alertsProp,
+  anchorMonth,
+  onAnchorChange,
+  isLoading,
+  isError,
   onDerivedChange,
 }: Props) {
   // ✅ blindaje: siempre array
@@ -113,12 +140,22 @@ export default function MonthlySummaryTable({
     [alertsProp]
   );
 
-  const [tableAnchorMonth, setTableAnchorMonth] = useState<Date>(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
+  // ✅ DEBUG: min/max eventTime para saber qué está llegando realmente
+  const debugMinMax = useMemo(() => {
+    if (alerts.length === 0) return null;
 
-  // Conteo por mes (map) ahora por IMPACTO/FRENADA/ACELERACION
+    const times = alerts
+      .map((a) => a?.eventTime)
+      .filter((x): x is string => typeof x === "string" && x.length > 0);
+
+    if (times.length === 0) return null;
+
+    // ojo: solo para debug rápido (strings ISO suelen ordenar bien)
+    const sorted = [...times].sort();
+    return { min: sorted[0], max: sorted[sorted.length - 1] };
+  }, [alerts]);
+
+  // ✅ Conteo por mes (map) por IMPACTO/FRENADA/ACELERACION
   const monthlyCounts = useMemo(() => {
     const map = new Map<
       string,
@@ -126,11 +163,10 @@ export default function MonthlySummaryTable({
     >();
 
     for (const a of alerts) {
-      if (!a?.eventTime) continue;
-      const dt = new Date(a.eventTime);
-      if (Number.isNaN(dt.getTime())) continue;
+      // ✅ FIX: monthKey calculado en LIMA
+      const key = monthKeyFromEventTimeInZone(a?.eventTime, LIMA_TZ);
+      if (!key) continue;
 
-      const key = monthKey(dt);
       const col = mapToTypeCol(getAlertType(a));
 
       if (!map.has(key)) {
@@ -142,10 +178,7 @@ export default function MonthlySummaryTable({
     return map;
   }, [alerts]);
 
-  const visibleMonths = useMemo(
-    () => rangeMonths(tableAnchorMonth, 3),
-    [tableAnchorMonth]
-  );
+  const visibleMonths = useMemo(() => rangeMonths(anchorMonth, 3), [anchorMonth]);
 
   const monthlyTableRows = useMemo(() => {
     return visibleMonths.map((k) => {
@@ -156,23 +189,16 @@ export default function MonthlySummaryTable({
 
   const tableHeaderLabel = useMemo(() => {
     return new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric" }).format(
-      tableAnchorMonth
+      anchorMonth
     );
-  }, [tableAnchorMonth]);
+  }, [anchorMonth]);
 
-  const quarterLabel = useMemo(
-    () => quarterLabelForAnchor(tableAnchorMonth),
-    [tableAnchorMonth]
-  );
+  const quarterLabel = useMemo(() => quarterLabelForAnchor(anchorMonth), [anchorMonth]);
 
-  // ✅ Data para gráfico: ahora por tipo
   const monthlyChartData: MonthlyTrendPoint[] = useMemo(() => {
     const asc = [...monthlyTableRows].reverse();
     return asc.map((r) => ({
       month: r.label,
-      // ⚠️ tu MonthlyTrendPoint antes era comportamiento/infra/equipo.
-      // Si tu MonthlyTrendChart espera esos campos, debes actualizarlo también.
-      // Yo te dejo aquí los nombres NUEVOS:
       impacto: r.IMPACTO,
       frenada: r.FRENADA,
       aceleracion: r.ACELERACION,
@@ -184,6 +210,14 @@ export default function MonthlySummaryTable({
     onDerivedChange?.({ tableHeaderLabel, quarterLabel, monthlyChartData });
   }, [onDerivedChange, tableHeaderLabel, quarterLabel, monthlyChartData]);
 
+  const debugTotalLoaded = alerts.length;
+
+  // ✅ DEBUG: qué meses detectó realmente el map
+  const debugMonthsDetected = useMemo(() => {
+    const keys = Array.from(monthlyCounts.keys()).sort();
+    return keys.join(", ");
+  }, [monthlyCounts]);
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4 lg:col-span-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -192,11 +226,35 @@ export default function MonthlySummaryTable({
           <p className="mt-1 text-[11px] text-slate-500">
             Mes (vertical) × Tipo de alerta (horizontal)
           </p>
+
+          {/* ✅ Debug visible */}
+          <p className="mt-1 text-[11px] text-slate-500">
+            Alertas cargadas:{" "}
+            <span className="font-semibold text-slate-200">{debugTotalLoaded}</span>
+          </p>
+
+          {debugMinMax && (
+            <p className="mt-1 text-[11px] text-slate-500">
+              eventTime min/max: <span className="text-slate-300">{debugMinMax.min}</span>{" "}
+              → <span className="text-slate-300">{debugMinMax.max}</span>
+            </p>
+          )}
+
+          <p className="mt-1 text-[11px] text-slate-500">
+            Meses detectados (Lima):{" "}
+            <span className="text-slate-300">{debugMonthsDetected || "—"}</span>
+          </p>
+
+          {isError && (
+            <p className="mt-1 text-[11px] text-rose-300">
+              Error cargando alertas del rango.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
           <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-[11px] font-semibold text-slate-200">
-            {tableHeaderLabel}
+            {isLoading ? "Cargando…" : tableHeaderLabel}
           </span>
           <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-[11px] font-semibold text-slate-300">
             {quarterLabel}
@@ -251,16 +309,16 @@ export default function MonthlySummaryTable({
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[11px] text-slate-500">
-          Navegación trimestral: retrocede/avanza 3 meses (la tabla sigue siendo mensual).
+          Navegación: retrocede/avanza 3 meses (la tabla sigue siendo mensual).
         </p>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setTableAnchorMonth((d) => addMonths(d, -3))}
+            onClick={() => onAnchorChange(addMonths(anchorMonth, -3))}
             className="inline-flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-900"
-            aria-label="Trimestre anterior"
-            title="Trimestre anterior"
+            aria-label="3 meses atrás"
+            title="3 meses atrás"
           >
             <ChevronLeft className="h-4 w-4" />
             Atrás
@@ -271,7 +329,7 @@ export default function MonthlySummaryTable({
             onClick={() => {
               const now = new Date();
               const nowMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-              setTableAnchorMonth(nowMonth);
+              onAnchorChange(nowMonth);
             }}
             className="inline-flex items-center gap-1 rounded-xl border border-indigo-600/60 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-600/20"
             aria-label="Ir a mes actual"
@@ -282,10 +340,10 @@ export default function MonthlySummaryTable({
 
           <button
             type="button"
-            onClick={() => setTableAnchorMonth((d) => addMonths(d, +3))}
+            onClick={() => onAnchorChange(addMonths(anchorMonth, +3))}
             className="inline-flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-900"
-            aria-label="Siguiente trimestre"
-            title="Siguiente trimestre"
+            aria-label="3 meses adelante"
+            title="3 meses adelante"
           >
             Adelante
             <ChevronRight className="h-4 w-4" />
@@ -294,8 +352,9 @@ export default function MonthlySummaryTable({
       </div>
 
       <p className="mt-2 text-[11px] text-slate-500">
-        Nota: este resumen se calcula con las alertas cargadas en esta vista (page=0,
-        size=5). Para conteo real mensual necesitas backend o traer más datos.
+        Nota: este resumen se calcula con las alertas cargadas para el rango visible
+        (search from/to, size=5000). Para un “conteo perfecto” sin límites, lo ideal es un
+        endpoint agregado por mes en backend.
       </p>
     </div>
   );
