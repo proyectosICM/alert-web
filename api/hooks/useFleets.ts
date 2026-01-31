@@ -1,3 +1,4 @@
+// api/hooks/useFleets.ts
 "use client";
 
 import {
@@ -23,6 +24,29 @@ const LIVE_LIST_QUERY_OPTIONS = {
   refetchInterval: 5000, // fleets no cambian tan seguido; ajusta a gusto
   refetchIntervalInBackground: true,
 } as const;
+
+// ✅ NUEVO: respuesta del endpoint de vehículos de flota
+export type FleetVehicleIdsResponse = {
+  vehiclePlates?: string[] | null;
+  vehicleCodes?: string[] | null;
+};
+
+// ===== helper: normaliza y prioriza placas =====
+function normalizeStrings(arr?: string[] | null): string[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((s): s is string => typeof s === "string")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function pickPrimaryVehicleList(resp: FleetVehicleIdsResponse): string[] {
+  const plates = normalizeStrings(resp.vehiclePlates);
+  if (plates.length > 0) return plates;
+
+  const codes = normalizeStrings(resp.vehicleCodes);
+  return codes;
+}
 
 // ========== READ ONE ==========
 export const useFleet = (companyId?: number, fleetId?: number) => {
@@ -102,7 +126,27 @@ export const useDeleteFleet = () => {
   });
 };
 
+// ========== VEHICLES (OBJETO COMPLETO) ==========
+export const useFleetVehicleIds = (params: { companyId?: number; fleetId?: number }) => {
+  const { companyId, fleetId } = params;
+
+  return useQuery<FleetVehicleIdsResponse, Error>({
+    queryKey: ["fleetVehiclesRaw", companyId, fleetId],
+    enabled: !!companyId && !!fleetId,
+    queryFn: () =>
+      fleetService.getFleetVehicleCodes({
+        companyId: companyId as number,
+        fleetId: fleetId as number,
+      }),
+    staleTime: 10_000,
+    gcTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+};
+
 // ========== VEHICLE CODES (LIST) ==========
+// ✅ mantiene el nombre para no romper imports,
+// pero ahora devuelve string[] "principal" (placas) y fallback (codes)
 export const useFleetVehicleCodes = (params: {
   companyId?: number;
   fleetId?: number;
@@ -112,11 +156,13 @@ export const useFleetVehicleCodes = (params: {
   return useQuery<string[], Error>({
     queryKey: ["fleetVehicles", companyId, fleetId],
     enabled: !!companyId && !!fleetId,
-    queryFn: () =>
-      fleetService.getFleetVehicleCodes({
+    queryFn: async () => {
+      const resp = await fleetService.getFleetVehicleCodes({
         companyId: companyId as number,
         fleetId: fleetId as number,
-      }),
+      });
+      return pickPrimaryVehicleList(resp);
+    },
     staleTime: 10_000,
     gcTime: 5 * 60 * 1000,
     placeholderData: keepPreviousData,
@@ -136,6 +182,9 @@ export const useAddFleetVehicles = () => {
     onSuccess: (updated, vars) => {
       qc.invalidateQueries({ queryKey: ["fleet", vars.companyId, vars.fleetId] });
       qc.invalidateQueries({ queryKey: ["fleetVehicles", vars.companyId, vars.fleetId] });
+      qc.invalidateQueries({
+        queryKey: ["fleetVehiclesRaw", vars.companyId, vars.fleetId],
+      });
       qc.invalidateQueries({ queryKey: ["fleets"] });
     },
   });
@@ -154,6 +203,9 @@ export const useRemoveFleetVehicles = () => {
     onSuccess: (updated, vars) => {
       qc.invalidateQueries({ queryKey: ["fleet", vars.companyId, vars.fleetId] });
       qc.invalidateQueries({ queryKey: ["fleetVehicles", vars.companyId, vars.fleetId] });
+      qc.invalidateQueries({
+        queryKey: ["fleetVehiclesRaw", vars.companyId, vars.fleetId],
+      });
       qc.invalidateQueries({ queryKey: ["fleets"] });
     },
   });
@@ -172,6 +224,9 @@ export const useReplaceFleetVehicles = () => {
     onSuccess: (updated, vars) => {
       qc.invalidateQueries({ queryKey: ["fleet", vars.companyId, vars.fleetId] });
       qc.invalidateQueries({ queryKey: ["fleetVehicles", vars.companyId, vars.fleetId] });
+      qc.invalidateQueries({
+        queryKey: ["fleetVehiclesRaw", vars.companyId, vars.fleetId],
+      });
       qc.invalidateQueries({ queryKey: ["fleets"] });
     },
   });
