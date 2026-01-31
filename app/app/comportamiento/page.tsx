@@ -5,10 +5,13 @@ import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
 
-import { useAlertsByUser } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
+import * as alertService from "@/api/services/alertService";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { stripHtml } from "@/lib/utils";
+
+// ✅ React Query
+import { useInfiniteQuery } from "@tanstack/react-query";
 
 // UI
 import { Button } from "@/components/ui/button";
@@ -49,10 +52,20 @@ type AlertExtras = {
   licensePlate?: string | null;
   vehicleCode?: string | null;
 
+  // planta (se mantiene por compatibilidad)
   plantName?: string | null;
   planta?: string | null;
   siteName?: string | null;
   locationName?: string | null;
+
+  // ✅ area (lo que usaremos en INFRAESTRUCTURA)
+  areaName?: string | null;
+  area?: string | null;
+  areaCode?: string | null;
+  zoneName?: string | null;
+  zona?: string | null;
+  regionName?: string | null;
+  region?: string | null;
 
   operatorName?: string | null;
   operador?: string | null;
@@ -76,6 +89,7 @@ function getVehicleLabel(a: AlertSummary) {
   return lp || vc || (id !== undefined ? `#${id}` : "Vehículo");
 }
 
+// (se mantiene, por si lo quieres mostrar como extra)
 function getPlantLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const plant =
@@ -86,6 +100,21 @@ function getPlantLabel(a: AlertSummary) {
   return plant || "Planta";
 }
 
+// ✅ NUEVO: área (INFRAESTRUCTURA)
+function getAreaLabel(a: AlertSummary) {
+  const x = a as AlertLike;
+  const area =
+    stripHtml(x.areaName ?? "") ||
+    stripHtml(x.area ?? "") ||
+    stripHtml(x.areaCode ?? "") ||
+    stripHtml(x.zoneName ?? "") ||
+    stripHtml(x.zona ?? "") ||
+    stripHtml(x.regionName ?? "") ||
+    stripHtml(x.region ?? "");
+  return area || "Área";
+}
+
+// (se mantiene)
 function getOperatorLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const op =
@@ -94,6 +123,17 @@ function getOperatorLabel(a: AlertSummary) {
     stripHtml(x.driverName ?? "") ||
     stripHtml(x.userName ?? "");
   return op || "Operador";
+}
+
+// ✅ NUEVO: agrupación/mostrar operador con fallback "Sin nombre"
+function getOperatorGroupLabel(a: AlertSummary) {
+  const x = a as AlertLike;
+  const op =
+    stripHtml(x.operatorName ?? "") ||
+    stripHtml(x.operador ?? "") ||
+    stripHtml(x.driverName ?? "") ||
+    stripHtml(x.userName ?? "");
+  return op?.trim() ? op.trim() : "Sin nombre";
 }
 
 function uniqSorted(values: string[]) {
@@ -129,16 +169,39 @@ function rangeMonthsAsc(endInclusive: Date, count: number) {
   return keys;
 }
 
+// ✅ helpers rango del mes actual (local)
+function startOfMonthLocal(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+}
+function startOfNextMonthLocal(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1, 0, 0, 0, 0);
+}
+function inRange(dt: Date, start: Date, end: Date) {
+  return dt.getTime() >= start.getTime() && dt.getTime() < end.getTime();
+}
+
+// ---- Types chart ----
 type ChartPoint = {
   key: string;
   mes: string;
   total: number;
 };
 
-// ✅ Para el gráfico de barras por equipo
-type VehicleBarPoint = {
-  equipo: string;
+// ✅ Para el gráfico de barras (top 10 dinámico según modo)
+type BarPoint = {
+  categoria: string; // equipo / área / operador
   total: number;
+};
+
+// ✅ Tipo de página (ajusta si tu backend usa otros nombres)
+type PageResponse<T> = {
+  content: T[];
+  number: number;
+  size: number;
+  totalPages: number;
+  totalElements: number;
+  last?: boolean;
+  first?: boolean;
 };
 
 export default function ComportamientoPage() {
@@ -151,37 +214,141 @@ export default function ComportamientoPage() {
   const [mode, setMode] = useState<Mode>("EQUIPO");
   const [selectedKey, setSelectedKey] = useState<string>("");
 
-  const { data, isLoading, isError, error } = useAlertsByUser({
-    companyId,
-    userId,
-    page: 0,
-    size: 50,
+  // ✅ NUEVO: filtro de operadores (no quita nada, solo agrega)
+  const OP_ALL = "Todos";
+  const [selectedOperator, setSelectedOperator] = useState<string>(OP_ALL);
+
+  // ✅ SOLO MES ACTUAL (todas las alertas del mes, paginando)
+  const PAGE_SIZE = 200;
+
+  const monthStart = useMemo(() => startOfMonthLocal(new Date()), []);
+  const monthEnd = useMemo(() => startOfNextMonthLocal(new Date()), []);
+
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<PageResponse<AlertSummary>, Error>({
+    queryKey: [
+      "alerts_by_user_month",
+      companyId,
+      userId,
+      PAGE_SIZE,
+      monthStart.toISOString(),
+    ],
+    enabled: !!companyId && !!userId,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      return (await alertService.getAlertsByUser({
+        companyId: companyId!,
+        userId: userId!,
+        page: Number(pageParam),
+        size: PAGE_SIZE,
+      })) as unknown as PageResponse<AlertSummary>;
+    },
+    getNextPageParam: (lastPage) => {
+      const next = lastPage.number + 1;
+      if (next >= lastPage.totalPages) return undefined;
+
+      const foundOlderThanMonth = (lastPage.content ?? []).some((a) => {
+        if (!a?.eventTime) return false;
+        const dt = new Date(a.eventTime);
+        return !Number.isNaN(dt.getTime()) && dt < monthStart;
+      });
+
+      return foundOlderThanMonth ? undefined : next;
+    },
+    staleTime: 30_000,
   });
 
-  const alerts: AlertSummary[] = useMemo(() => data?.content ?? [], [data]);
-
-  // ✅ Nuevo: conteo por EQUIPO (vehículo) con todas las alertas cargadas
-  const vehicleBarData: VehicleBarPoint[] = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    for (const a of alerts) {
-      const label = getVehicleLabel(a);
-      counts.set(label, (counts.get(label) ?? 0) + 1);
+  // auto-cargar páginas hasta completar el mes
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
     }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-    // Orden: mayor a menor. Top 10 para que se vea bien.
-    return Array.from(counts.entries())
-      .map(([equipo, total]) => ({ equipo, total }))
-      .sort((a, b) => b.total - a.total || a.equipo.localeCompare(b.equipo, "es"))
-      .slice(0, 10);
+  // ✅ ALERTAS DEL MES (filtradas)
+  const alerts: AlertSummary[] = useMemo(() => {
+    const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
+    return all.filter((a) => {
+      if (!a?.eventTime) return false;
+      const dt = new Date(a.eventTime);
+      if (Number.isNaN(dt.getTime())) return false;
+      return inRange(dt, monthStart, monthEnd);
+    });
+  }, [data, monthStart, monthEnd]);
+
+  // ✅ NUEVO: opciones de operadores + auto-selección
+  const operatorOptions = useMemo(() => {
+    const ops = uniqSorted(alerts.map(getOperatorGroupLabel));
+    return [OP_ALL, ...ops];
   }, [alerts]);
 
-  // Opciones del combobox
+  useEffect(() => {
+    if (!operatorOptions.length) return;
+    if (!selectedOperator || !operatorOptions.includes(selectedOperator)) {
+      setSelectedOperator(OP_ALL);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [operatorOptions.join("|")]);
+
+  // ✅ NUEVO: aplicar filtro por operador a TODA la pantalla (barras, opciones, lista)
+  const alertsAfterOperatorFilter: AlertSummary[] = useMemo(() => {
+    if (!selectedOperator || selectedOperator === OP_ALL) return alerts;
+    return alerts.filter((a) => getOperatorGroupLabel(a) === selectedOperator);
+  }, [alerts, selectedOperator]);
+
+  // ✅ Top 10 dinámico según el modo:
+  // - EQUIPO => por vehículo
+  // - INFRAESTRUCTURA => por ÁREA
+  // - OPERADOR => por operador (y si no hay nombre => "Sin nombre")
+  const barMeta = useMemo(() => {
+    const title =
+      mode === "EQUIPO"
+        ? "Alertas por equipo (Top 10)"
+        : mode === "INFRAESTRUCTURA"
+          ? "Alertas por área (Top 10)"
+          : "Alertas por operador (Top 10)";
+
+    const tooltipLabel =
+      mode === "EQUIPO" ? "Equipo" : mode === "INFRAESTRUCTURA" ? "Área" : "Operador";
+
+    return { title, tooltipLabel };
+  }, [mode]);
+
+  const barData: BarPoint[] = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const a of alertsAfterOperatorFilter) {
+      const key =
+        mode === "EQUIPO"
+          ? getVehicleLabel(a)
+          : mode === "INFRAESTRUCTURA"
+            ? getAreaLabel(a)
+            : getOperatorGroupLabel(a);
+
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return Array.from(counts.entries())
+      .map(([categoria, total]) => ({ categoria, total }))
+      .sort((a, b) => b.total - a.total || a.categoria.localeCompare(b.categoria, "es"))
+      .slice(0, 10);
+  }, [alertsAfterOperatorFilter, mode]);
+
+  // Opciones del combobox (solo del mes, YA con filtro operador aplicado)
   const options = useMemo(() => {
-    if (mode === "EQUIPO") return uniqSorted(alerts.map(getVehicleLabel));
-    if (mode === "INFRAESTRUCTURA") return uniqSorted(alerts.map(getPlantLabel));
-    return uniqSorted(alerts.map(getOperatorLabel));
-  }, [alerts, mode]);
+    if (mode === "EQUIPO")
+      return uniqSorted(alertsAfterOperatorFilter.map(getVehicleLabel));
+    if (mode === "INFRAESTRUCTURA")
+      return uniqSorted(alertsAfterOperatorFilter.map(getAreaLabel));
+    return uniqSorted(alertsAfterOperatorFilter.map(getOperatorGroupLabel));
+  }, [alertsAfterOperatorFilter, mode]);
 
   useEffect(() => {
     if (!options.length) {
@@ -194,26 +361,26 @@ export default function ComportamientoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, options.join("|")]);
 
-  // Filtrado “coincidente”
+  // Filtrado “coincidente” (solo del mes, YA con filtro operador aplicado)
   const filteredAlerts = useMemo(() => {
     if (!selectedKey) return [];
     const match = (a: AlertSummary) => {
       if (mode === "EQUIPO") return getVehicleLabel(a) === selectedKey;
-      if (mode === "INFRAESTRUCTURA") return getPlantLabel(a) === selectedKey;
-      return getOperatorLabel(a) === selectedKey;
+      if (mode === "INFRAESTRUCTURA") return getAreaLabel(a) === selectedKey;
+      return getOperatorGroupLabel(a) === selectedKey;
     };
-    return alerts.filter(match);
-  }, [alerts, mode, selectedKey]);
+    return alertsAfterOperatorFilter.filter(match);
+  }, [alertsAfterOperatorFilter, mode, selectedKey]);
 
   const titleByMode: Record<Mode, string> = {
     EQUIPO: "Equipo (vehículo)",
-    INFRAESTRUCTURA: "Infraestructura (planta)",
+    INFRAESTRUCTURA: "Infraestructura (área)",
     OPERADOR: "Operador",
   };
 
   const labelByMode: Record<Mode, string> = {
     EQUIPO: "Vehículo",
-    INFRAESTRUCTURA: "Planta",
+    INFRAESTRUCTURA: "Área",
     OPERADOR: "Operador",
   };
 
@@ -227,6 +394,7 @@ export default function ComportamientoPage() {
   };
 
   // ✅ Datos para gráfico mensual (filtradas, últimos 6 meses)
+  // Nota: como ahora SOLO traemos el mes actual, esto seguirá mostrando 0 en meses previos.
   const chartData: ChartPoint[] = useMemo(() => {
     const now = new Date();
     const end = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -318,40 +486,74 @@ export default function ComportamientoPage() {
           </div>
         </div>
 
-        {/* ✅ NUEVO: Gráfico barras por equipo (Top 10) */}
+        {/* ✅ NUEVO: Filtro de operadores (global) */}
+        <div className="mt-4 grid gap-2 sm:grid-cols-[220px,1fr] sm:items-center">
+          <label className="text-xs font-medium text-slate-400">Filtro operador =</label>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              value={selectedOperator}
+              onChange={(e) => setSelectedOperator(e.target.value)}
+              className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
+            >
+              {operatorOptions.length === 0 ? (
+                <option value={OP_ALL}>{OP_ALL}</option>
+              ) : (
+                operatorOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))
+              )}
+            </select>
+
+            <span className="text-[11px] text-slate-500">
+              Alertas (mes) con filtro:{" "}
+              <span className="font-semibold text-slate-200">
+                {alertsAfterOperatorFilter.length}
+              </span>
+            </span>
+          </div>
+        </div>
+
+        {/* ✅ Gráfico barras (Top 10) - dinámico por modo */}
         <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-xs font-semibold text-slate-100">
-                Alertas por equipo (Top 10)
-              </p>
+              <p className="text-xs font-semibold text-slate-100">{barMeta.title}</p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Basado en las alertas cargadas (size=50) para este usuario.
+                Basado en todas las alertas del mes actual
+                {selectedOperator !== OP_ALL ? ` (Operador: ${selectedOperator}).` : "."}
+                {isFetchingNextPage ? " Cargando más páginas…" : ""}
               </p>
             </div>
 
             <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
-              Equipos: {vehicleBarData.length}
+              {mode === "EQUIPO"
+                ? "Equipos"
+                : mode === "INFRAESTRUCTURA"
+                  ? "Áreas"
+                  : "Operadores"}
+              : {barData.length}
             </span>
           </div>
 
           <div className="mt-3 h-[220px] w-full">
-            {vehicleBarData.length === 0 ? (
+            {barData.length === 0 ? (
               <div className="flex h-full items-center justify-center text-xs text-slate-400">
                 No hay datos para graficar.
               </div>
             ) : (
               <div className="h-full w-full overflow-x-auto">
-                {/* ancho mínimo para que labels largos no se aplasten */}
                 <div className="h-full min-w-[680px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={vehicleBarData}
+                      data={barData}
                       margin={{ top: 10, right: 16, left: 0, bottom: 10 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                       <XAxis
-                        dataKey="equipo"
+                        dataKey="categoria"
                         tickLine={false}
                         axisLine={false}
                         interval={0}
@@ -369,7 +571,7 @@ export default function ComportamientoPage() {
                           [`${value ?? ""}`, "Alertas"] as const
                         }
                         labelFormatter={(label?: ReactNode) =>
-                          `Equipo: ${typeof label === "string" ? label : ""}`
+                          `${barMeta.tooltipLabel}: ${typeof label === "string" ? label : ""}`
                         }
                         contentStyle={{
                           background: "rgba(2, 6, 23, 0.95)",
@@ -381,8 +583,15 @@ export default function ComportamientoPage() {
                         labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
                       />
                       <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
-
-                      <Bar dataKey="total" name="Alertas" radius={[10, 10, 0, 0]} />
+                      <Bar
+                        dataKey="total"
+                        name="Alertas"
+                        radius={[10, 10, 0, 0]}
+                        fill="rgba(99, 102, 241, 0.85)"
+                        stroke="rgba(99, 102, 241, 1)"
+                        strokeWidth={1}
+                        isAnimationActive={false}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -391,8 +600,8 @@ export default function ComportamientoPage() {
           </div>
 
           <p className="mt-2 text-[11px] text-slate-500">
-            Si quieres que esto sea “real” (todo el histórico), conviene un endpoint
-            agregado en backend (count por vehículo).
+            En Infraestructura se agrupa por área; en Equipo por vehículo; y en Operador
+            por nombre de operador (si no hay nombre =&gt; “Sin nombre”).
           </p>
         </div>
 
@@ -458,6 +667,7 @@ export default function ComportamientoPage() {
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
                 Conteo de alertas para “{selectedKey || "—"}”
+                {selectedOperator !== OP_ALL ? ` (Operador: ${selectedOperator})` : ""}
               </p>
             </div>
 
@@ -500,8 +710,8 @@ export default function ComportamientoPage() {
           </div>
 
           <p className="mt-2 text-[11px] text-slate-500">
-            Nota: esto depende de las alertas cargadas (size=50). Si quieres histórico
-            real, trae más datos o un endpoint agregado.
+            Nota: como aquí se trae solo el mes actual, si quieres un gráfico “mejor” te
+            lo cambio a “por día del mes”.
           </p>
         </div>
       </section>
@@ -518,8 +728,9 @@ export default function ComportamientoPage() {
                 Alertas coincidentes
               </h2>
               <p className="text-[11px] text-slate-500 sm:text-xs">
-                Mostrando alertas que coinciden con {labelByMode[mode].toLowerCase()}{" "}
-                seleccionado.
+                Mostrando alertas del mes que coinciden con{" "}
+                {labelByMode[mode].toLowerCase()} seleccionado
+                {selectedOperator !== OP_ALL ? ` (Operador: ${selectedOperator})` : ""}.
               </p>
             </div>
           </div>
@@ -588,12 +799,13 @@ export default function ComportamientoPage() {
                       <p className="text-sm font-medium text-slate-100">
                         {licensePlate || vehicleCode || (id ? `#${id}` : `#${idx}`)}
                       </p>
+
                       <p className="text-[11px] text-slate-500">
                         {mode === "EQUIPO"
-                          ? `Planta: ${getPlantLabel(alert)} • Operador: ${getOperatorLabel(alert)}`
+                          ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
                           : mode === "INFRAESTRUCTURA"
-                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorLabel(alert)}`
-                            : `Vehículo: ${getVehicleLabel(alert)} • Planta: ${getPlantLabel(alert)}`}
+                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
+                            : `Vehículo: ${getVehicleLabel(alert)} • Área: ${getAreaLabel(alert)}`}
                       </p>
                     </div>
 
@@ -626,6 +838,9 @@ export default function ComportamientoPage() {
                       {alert.eventTime ? new Date(alert.eventTime).toLocaleString() : "-"}
                     </span>
                   </div>
+
+                  {/* opcional: si quieres seguir mostrando planta como extra */}
+                  {/* <p className="text-[11px] text-slate-600">Planta: {getPlantLabel(alert)}</p> */}
                 </div>
               </div>
             );

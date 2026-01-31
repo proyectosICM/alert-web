@@ -15,11 +15,12 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/comportamiento", label: "Comportamiento", icon: Activity },
-  { href: "/app/alerts", label: "Alertas", icon: Bell },
   { href: "/app/groups", label: "Grupos y Flotas", icon: Users },
   { href: "/app/users", label: "Usuarios", icon: UserCog },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
+
+//  { href: "/app/alerts", label: "Alertas", icon: Bell },
 
 export function Sidebar() {
   const pathname = usePathname();
