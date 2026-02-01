@@ -74,14 +74,6 @@ function toISOStartOfMonthLima(d: Date) {
   return `${y}-${m}-01T00:00:00-05:00`;
 }
 
-// calcula inicio del trimestre (Q) para un anchorMonth
-function getQuarterStart(anchorMonth: Date) {
-  const y = anchorMonth.getFullYear();
-  const m = anchorMonth.getMonth();
-  const qStartMonth = Math.floor(m / 3) * 3;
-  return new Date(y, qStartMonth, 1);
-}
-
 export default function AppHome() {
   const router = useRouter();
 
@@ -114,16 +106,12 @@ export default function AppHome() {
   }, [fleetFilter, fleets]);
 
   // ==========================
-  // ✅ Anchor del trimestre (TABLA + CHART)
+  // ✅ Anchor (TABLA + CHART)
   // ==========================
   const [anchorMonth, setAnchorMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
-
-  const quarterStart = useMemo(() => getQuarterStart(anchorMonth), [anchorMonth]);
-  // ✅ FIX: quarterEnd no se usa -> lo quitamos (evita no-unused-vars)
-  // const quarterEnd = useMemo(() => addMonths(quarterStart, 3), [quarterStart]);
 
   // ✅ CAMBIO MÍNIMO: el query debe traer EXACTAMENTE los 3 meses que muestra la tabla
   // tabla = [anchorMonth, anchorMonth-1, anchorMonth-2]
@@ -188,7 +176,7 @@ export default function AppHome() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
+    <div className="flex h-full min-h-0 min-w-0 flex-col space-y-4 pb-16 md:pb-4">
       {/* Header */}
       <div className="space-y-1">
         <div className="flex items-center gap-2">
@@ -201,9 +189,10 @@ export default function AppHome() {
         </p>
       </div>
 
-      <section className="grid gap-3 lg:grid-cols-3">
+      {/* ✅ Responsive grid: 1 col -> 2 col (md) -> 3 col (xl) */}
+      <section className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {/* FLOTAS */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5 lg:col-span-3">
+        <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5 md:col-span-2 xl:col-span-3">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="w-full lg:max-w-[640px]">
               <p className="text-sm font-semibold text-slate-100">Selector de flota</p>
@@ -220,20 +209,22 @@ export default function AppHome() {
                       aria-label="Filtrar por flota"
                       title="Filtrar por flota"
                     >
-                      <span className="truncate">{selectedFleetLabel}</span>
-                      <ChevronsUpDown className="h-5 w-5 text-slate-400" />
+                      <span className="min-w-0 truncate">{selectedFleetLabel}</span>
+                      <ChevronsUpDown className="h-5 w-5 shrink-0 text-slate-400" />
                     </button>
                   </PopoverTrigger>
 
+                  {/* ✅ Responsive Popover: evita overflow en móvil */}
                   <PopoverContent
                     align="start"
                     side="bottom"
                     sideOffset={10}
-                    className="w-[360px] rounded-2xl border-slate-800 bg-slate-950/95 p-2 shadow-xl"
+                    className="w-[min(360px,calc(100vw-2rem))] rounded-2xl border-slate-800 bg-slate-950/95 p-2 shadow-xl"
                   >
                     <Command>
                       <CommandInput placeholder="Buscar flota..." />
-                      <CommandList>
+                      {/* ✅ scroll si hay muchas flotas */}
+                      <CommandList className="max-h-[55vh] overflow-auto">
                         <CommandEmpty>No se encontraron flotas.</CommandEmpty>
 
                         <CommandGroup heading="Opciones">
@@ -272,8 +263,8 @@ export default function AppHome() {
                                     fleetFilter === id ? "opacity-100" : "opacity-0"
                                   )}
                                 />
-                                <span className="truncate">{f.name}</span>
-                                <span className="ml-auto text-[11px] text-slate-500">
+                                <span className="min-w-0 truncate">{f.name}</span>
+                                <span className="ml-auto shrink-0 text-[11px] text-slate-500">
                                   #{id}
                                 </span>
                               </CommandItem>
@@ -322,24 +313,28 @@ export default function AppHome() {
         </div>
 
         {/* TOTAL + FECHA */}
-        <DailyTotalCard
-          companyId={companyId}
-          fleetId={fleetFilter === "ALL" ? undefined : Number(fleetFilter)}
-        />
+        <div className="min-w-0">
+          <DailyTotalCard
+            companyId={companyId}
+            fleetId={fleetFilter === "ALL" ? undefined : Number(fleetFilter)}
+          />
+        </div>
 
-        {/* TABLA (usa alerts reales del rango visible) */}
-        <MonthlySummaryTable
-          alerts={alertsForTable}
-          anchorMonth={anchorMonth}
-          onAnchorChange={setAnchorMonth}
-          isLoading={quarterAlertsQuery.isLoading}
-          isError={quarterAlertsQuery.isError}
-          onDerivedChange={(d: MonthlyDerivedPayload) => {
-            setChartData(d.monthlyChartData);
-            setTableHeaderLabel(d.tableHeaderLabel);
-            setQuarterLabel(d.quarterLabel);
-          }}
-        />
+        {/* TABLA (en md ocupa 1 col; en xl ocupa 2 cols; wrapper con overflow-x para móviles) */}
+        <div className="min-w-0 overflow-x-auto md:overflow-visible xl:col-span-2">
+          <MonthlySummaryTable
+            alerts={alertsForTable}
+            anchorMonth={anchorMonth}
+            onAnchorChange={setAnchorMonth}
+            isLoading={quarterAlertsQuery.isLoading}
+            isError={quarterAlertsQuery.isError}
+            onDerivedChange={(d: MonthlyDerivedPayload) => {
+              setChartData(d.monthlyChartData);
+              setTableHeaderLabel(d.tableHeaderLabel);
+              setQuarterLabel(d.quarterLabel);
+            }}
+          />
+        </div>
       </section>
 
       {/* GRÁFICO */}
@@ -381,7 +376,7 @@ export default function AppHome() {
       </section>
 
       {/* Últimas alertas (size=5) */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
+      <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-900 text-slate-200">
@@ -410,7 +405,6 @@ export default function AppHome() {
               Error al obtener alertas
             </p>
             <p className="mt-1 max-w-md text-xs text-slate-500">
-              {/* ✅ FIX: quitar `any` */}
               {latestQuery.error instanceof Error
                 ? latestQuery.error.message
                 : "Revisa la conexión con el servidor."}
@@ -455,16 +449,17 @@ export default function AppHome() {
                 }`}
               >
                 <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-col">
-                      <p className="text-sm font-medium text-slate-100">
+                  {/* ✅ Responsive: en móvil se apila, en sm vuelve a fila */}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <div className="flex min-w-0 flex-col">
+                      <p className="truncate text-sm font-medium text-slate-100">
                         {licensePlate || vehicleCode || `#${alert.id}`}
                       </p>
                       <p className="text-[11px] text-slate-500">ID: {alert.id}</p>
                     </div>
 
                     <span
-                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${severityStyles[severityBucket]}`}
+                      className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${severityStyles[severityBucket]}`}
                     >
                       {severityLabel}
                     </span>
@@ -477,7 +472,7 @@ export default function AppHome() {
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                     <span>{isPending ? "Pendiente" : "Atendida"}</span>
                     <span className="text-slate-700">•</span>
-                    <span className="truncate">
+                    <span className="min-w-0 truncate">
                       {new Date(alert.eventTime).toLocaleString()}
                     </span>
                   </div>
@@ -496,7 +491,7 @@ export default function AppHome() {
         </button>
       </section>
 
-      <section>
+      <section className="min-w-0">
         <button
           type="button"
           onClick={handleGoSettings}
