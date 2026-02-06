@@ -3,7 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, Bell, Users, Settings, UserCog, Activity } from "lucide-react";
+import {
+  LayoutDashboard,
+  Bell,
+  Users,
+  Settings,
+  UserCog,
+  Activity,
+  Clock,
+  CalendarDays,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -15,6 +24,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/comportamiento", label: "Comportamiento", icon: Activity },
+  { href: "/app/turnos", label: "Turnos", icon: CalendarDays },
   { href: "/app/groups", label: "Grupos y Flotas", icon: Users },
   { href: "/app/users", label: "Usuarios", icon: UserCog },
   { href: "/app/settings", label: "Settings", icon: Settings },
