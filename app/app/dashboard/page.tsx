@@ -3,44 +3,18 @@
 
 import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Gauge,
-  AlertCircle,
-  ListOrdered,
-  Settings,
-  Check,
-  ChevronsUpDown,
-} from "lucide-react";
+import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
 
 import { useAlertsByUser, useAlertsSearch } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
-import { cn, stripHtml } from "@/lib/utils";
-
-// Fleets hook
-import { useFleets } from "@/api/hooks/useFleets";
-
-// UI (para flotas)
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+import { stripHtml } from "@/lib/utils";
 
 import MonthlyTrendChart, { MonthlyTrendPoint } from "./MonthlyTrendChart";
 import DailyTotalCard from "./DailyTotalCard";
 import MonthlySummaryTable from "./MonthlySummaryTable";
 
 // ====== Types ======
-type Fleet = {
-  id: string | number;
-  name: string;
-};
-
 type MonthlyDerivedPayload = {
   monthlyChartData: MonthlyTrendPoint[];
   tableHeaderLabel: string;
@@ -82,28 +56,8 @@ export default function AppHome() {
   const companyId = auth?.companyId;
   const userId = auth?.userId;
 
-  // Fleets
-  const [fleetFilter, setFleetFilter] = useState<string>("ALL");
-  const [openFleet, setOpenFleet] = useState(false);
-
-  const fleetsQuery = useFleets({
-    companyId,
-    page: 0,
-    size: 200,
-    sort: "name,asc",
-  });
-
-  // Tipamos el arreglo de flotas
-  const fleets: Fleet[] = useMemo(() => {
-    const raw = fleetsQuery.data?.content;
-    return Array.isArray(raw) ? (raw as Fleet[]) : [];
-  }, [fleetsQuery.data]);
-
-  const selectedFleetLabel = useMemo(() => {
-    if (fleetFilter === "ALL") return "Todas";
-    const f = fleets.find((x) => String(x.id) === fleetFilter);
-    return f?.name ?? "Todas";
-  }, [fleetFilter, fleets]);
+  // ✅ Fleet filter (GLOBAL): undefined = Todas
+  const [fleetId, setFleetId] = useState<number | undefined>(undefined);
 
   // ==========================
   // ✅ Anchor (TABLA + CHART)
@@ -113,7 +67,6 @@ export default function AppHome() {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
-  // ✅ CAMBIO MÍNIMO: el query debe traer EXACTAMENTE los 3 meses que muestra la tabla
   // tabla = [anchorMonth, anchorMonth-1, anchorMonth-2]
   // from = inicio de (anchorMonth - 2)
   // to   = inicio de (anchorMonth + 1)  (exclusivo)
@@ -131,10 +84,10 @@ export default function AppHome() {
     from,
     to,
     page: 0,
-    size: 5000, // ajusta según volumen
+    size: 5000,
     sort: "eventTime,asc",
-    // de momento sin flota:
-    // fleetId: fleetFilter === "ALL" ? undefined : Number(fleetFilter),
+    // ✅ cuando tu backend lo soporte, descomenta:
+    // fleetId,
   });
 
   const alertsForTable: AlertSummary[] = useMemo(() => {
@@ -150,8 +103,8 @@ export default function AppHome() {
     userId,
     page: 0,
     size: 5,
-    // 👇 cuando tengas backend:
-    // fleetId: fleetFilter === "ALL" ? undefined : Number(fleetFilter),
+    // ✅ cuando tu backend lo soporte, descomenta:
+    // fleetId,
   });
 
   const latestAlerts: AlertSummary[] = useMemo(() => {
@@ -191,136 +144,16 @@ export default function AppHome() {
 
       {/* ✅ Responsive grid: 1 col -> 2 col (md) -> 3 col (xl) */}
       <section className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {/* FLOTAS */}
-        <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5 md:col-span-2 xl:col-span-3">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="w-full lg:max-w-[640px]">
-              <p className="text-sm font-semibold text-slate-100">Selector de flota</p>
-              <p className="mt-1 text-[12px] text-slate-500">
-                Elige “Todas” o una flota para filtrar la vista (solo UI/lógica).
-              </p>
-
-              <div className="mt-3">
-                <Popover open={openFleet} onOpenChange={setOpenFleet}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex h-14 w-full items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
-                      aria-label="Filtrar por flota"
-                      title="Filtrar por flota"
-                    >
-                      <span className="min-w-0 truncate">{selectedFleetLabel}</span>
-                      <ChevronsUpDown className="h-5 w-5 shrink-0 text-slate-400" />
-                    </button>
-                  </PopoverTrigger>
-
-                  {/* ✅ Responsive Popover: evita overflow en móvil */}
-                  <PopoverContent
-                    align="start"
-                    side="bottom"
-                    sideOffset={10}
-                    className="w-[min(360px,calc(100vw-2rem))] rounded-2xl border-slate-800 bg-slate-950/95 p-2 shadow-xl"
-                  >
-                    <Command>
-                      <CommandInput placeholder="Buscar flota..." />
-                      {/* ✅ scroll si hay muchas flotas */}
-                      <CommandList className="max-h-[55vh] overflow-auto">
-                        <CommandEmpty>No se encontraron flotas.</CommandEmpty>
-
-                        <CommandGroup heading="Opciones">
-                          <CommandItem
-                            value="ALL"
-                            onSelect={() => {
-                              setFleetFilter("ALL");
-                              setOpenFleet(false);
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                fleetFilter === "ALL" ? "opacity-100" : "opacity-0"
-                              )}
-                            />
-                            Todas
-                          </CommandItem>
-                        </CommandGroup>
-
-                        <CommandGroup heading="Flotas">
-                          {fleets.map((f) => {
-                            const id = String(f.id);
-                            return (
-                              <CommandItem
-                                key={id}
-                                value={`${f.name} ${id}`}
-                                onSelect={() => {
-                                  setFleetFilter(id);
-                                  setOpenFleet(false);
-                                }}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4",
-                                    fleetFilter === id ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                <span className="min-w-0 truncate">{f.name}</span>
-                                <span className="ml-auto shrink-0 text-[11px] text-slate-500">
-                                  #{id}
-                                </span>
-                              </CommandItem>
-                            );
-                          })}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-
-                    <div className="mt-2 px-1">
-                      <p className="text-[11px] text-slate-500">
-                        {fleetsQuery.isLoading
-                          ? "Cargando flotas..."
-                          : `Mostrando ${fleets.length} flotas`}
-                      </p>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                <p className="mt-2 text-[11px] text-slate-500">
-                  Selección actual:{" "}
-                  <span className="font-semibold text-slate-200">
-                    {selectedFleetLabel}
-                  </span>
-                  {fleetFilter !== "ALL" && (
-                    <span className="text-slate-500"> (id: {fleetFilter})</span>
-                  )}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex w-full flex-col items-start gap-2 lg:w-auto lg:items-end">
-              <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-[11px] font-semibold text-slate-200">
-                {fleetFilter === "ALL" ? "Sin filtro" : "Filtro activo"}
-              </span>
-              <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-[11px] font-semibold text-slate-300">
-                Flotas: {fleetsQuery.isLoading ? "…" : fleets.length}
-              </span>
-              <p className="max-w-[320px] text-[11px] text-slate-500 lg:text-right">
-                Tip: si quieres que afecte el backend, pasa{" "}
-                <span className="font-semibold text-slate-300">fleetId</span> en tus
-                hooks.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* TOTAL + FECHA */}
+        {/* ✅ TOTAL + FECHA + SELECTOR FLEET (DENTRO DEL CARD) */}
         <div className="min-w-0">
           <DailyTotalCard
             companyId={companyId}
-            fleetId={fleetFilter === "ALL" ? undefined : Number(fleetFilter)}
+            fleetId={fleetId}
+            onFleetChange={setFleetId}
           />
         </div>
 
-        {/* TABLA (en md ocupa 1 col; en xl ocupa 2 cols; wrapper con overflow-x para móviles) */}
+        {/* TABLA */}
         <div className="min-w-0 overflow-x-auto md:overflow-visible xl:col-span-2">
           <MonthlySummaryTable
             alerts={alertsForTable}
@@ -449,7 +282,6 @@ export default function AppHome() {
                 }`}
               >
                 <div className="flex flex-col gap-1.5">
-                  {/* ✅ Responsive: en móvil se apila, en sm vuelve a fila */}
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                     <div className="flex min-w-0 flex-col">
                       <p className="truncate text-sm font-medium text-slate-100">

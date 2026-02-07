@@ -41,10 +41,6 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
   return "LOW";
 }
 
-/**
- * ✅ Tipos auxiliares para evitar `any`
- * (tolerante a campos alternativos del backend)
- */
 type AlertExtras = {
   id?: string | number;
   alertId?: string | number;
@@ -52,13 +48,11 @@ type AlertExtras = {
   licensePlate?: string | null;
   vehicleCode?: string | null;
 
-  // planta (se mantiene por compatibilidad)
   plantName?: string | null;
   planta?: string | null;
   siteName?: string | null;
   locationName?: string | null;
 
-  // ✅ area (lo que usaremos en INFRAESTRUCTURA)
   areaName?: string | null;
   area?: string | null;
   areaCode?: string | null;
@@ -80,7 +74,6 @@ function getAlertId(a: AlertSummary): string | number | undefined {
   return x.id ?? x.alertId ?? a.id;
 }
 
-// ---- Helpers para “leer” campos (tolerante a backend) ----
 function getVehicleLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const lp = stripHtml(x.licensePlate ?? a.licensePlate ?? "");
@@ -89,7 +82,6 @@ function getVehicleLabel(a: AlertSummary) {
   return lp || vc || (id !== undefined ? `#${id}` : "Vehículo");
 }
 
-// (se mantiene, por si lo quieres mostrar como extra)
 function getPlantLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const plant =
@@ -100,7 +92,6 @@ function getPlantLabel(a: AlertSummary) {
   return plant || "Planta";
 }
 
-// ✅ NUEVO: área (INFRAESTRUCTURA)
 function getAreaLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const area =
@@ -114,7 +105,6 @@ function getAreaLabel(a: AlertSummary) {
   return area || "Área";
 }
 
-// (se mantiene)
 function getOperatorLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const op =
@@ -125,7 +115,6 @@ function getOperatorLabel(a: AlertSummary) {
   return op || "Operador";
 }
 
-// ✅ NUEVO: agrupación/mostrar operador con fallback "Sin nombre"
 function getOperatorGroupLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const op =
@@ -142,7 +131,6 @@ function uniqSorted(values: string[]) {
   );
 }
 
-// ---- Mes (para el gráfico) ----
 function monthKey(d: Date) {
   const y = d.getFullYear();
   const m = d.getMonth() + 1;
@@ -169,7 +157,6 @@ function rangeMonthsAsc(endInclusive: Date, count: number) {
   return keys;
 }
 
-// ✅ helpers rango del mes actual (local)
 function startOfMonthLocal(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
 }
@@ -180,20 +167,17 @@ function inRange(dt: Date, start: Date, end: Date) {
   return dt.getTime() >= start.getTime() && dt.getTime() < end.getTime();
 }
 
-// ---- Types chart ----
 type ChartPoint = {
   key: string;
   mes: string;
   total: number;
 };
 
-// ✅ Para el gráfico de barras (top 10 dinámico según modo)
 type BarPoint = {
-  categoria: string; // equipo / área / operador
+  categoria: string;
   total: number;
 };
 
-// ✅ Tipo de página (ajusta si tu backend usa otros nombres)
 type PageResponse<T> = {
   content: T[];
   number: number;
@@ -214,11 +198,9 @@ export default function ComportamientoPage() {
   const [mode, setMode] = useState<Mode>("EQUIPO");
   const [selectedKey, setSelectedKey] = useState<string>("");
 
-  // ✅ NUEVO: filtro de operadores (no quita nada, solo agrega)
   const OP_ALL = "Todos";
   const [selectedOperator, setSelectedOperator] = useState<string>(OP_ALL);
 
-  // ✅ SOLO MES ACTUAL (todas las alertas del mes, paginando)
   const PAGE_SIZE = 200;
 
   const monthStart = useMemo(() => startOfMonthLocal(new Date()), []);
@@ -265,14 +247,10 @@ export default function ComportamientoPage() {
     staleTime: 30_000,
   });
 
-  // auto-cargar páginas hasta completar el mes
   useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage) {
-      fetchNextPage();
-    }
+    if (hasNextPage && !isFetchingNextPage) fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // ✅ ALERTAS DEL MES (filtradas)
   const alerts: AlertSummary[] = useMemo(() => {
     const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
     return all.filter((a) => {
@@ -283,7 +261,6 @@ export default function ComportamientoPage() {
     });
   }, [data, monthStart, monthEnd]);
 
-  // ✅ NUEVO: opciones de operadores + auto-selección
   const operatorOptions = useMemo(() => {
     const ops = uniqSorted(alerts.map(getOperatorGroupLabel));
     return [OP_ALL, ...ops];
@@ -297,16 +274,11 @@ export default function ComportamientoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [operatorOptions.join("|")]);
 
-  // ✅ NUEVO: aplicar filtro por operador a TODA la pantalla (barras, opciones, lista)
   const alertsAfterOperatorFilter: AlertSummary[] = useMemo(() => {
     if (!selectedOperator || selectedOperator === OP_ALL) return alerts;
     return alerts.filter((a) => getOperatorGroupLabel(a) === selectedOperator);
   }, [alerts, selectedOperator]);
 
-  // ✅ Top 10 dinámico según el modo:
-  // - EQUIPO => por vehículo
-  // - INFRAESTRUCTURA => por ÁREA
-  // - OPERADOR => por operador (y si no hay nombre => "Sin nombre")
   const barMeta = useMemo(() => {
     const title =
       mode === "EQUIPO"
@@ -341,7 +313,6 @@ export default function ComportamientoPage() {
       .slice(0, 10);
   }, [alertsAfterOperatorFilter, mode]);
 
-  // Opciones del combobox (solo del mes, YA con filtro operador aplicado)
   const options = useMemo(() => {
     if (mode === "EQUIPO")
       return uniqSorted(alertsAfterOperatorFilter.map(getVehicleLabel));
@@ -361,7 +332,6 @@ export default function ComportamientoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, options.join("|")]);
 
-  // Filtrado “coincidente” (solo del mes, YA con filtro operador aplicado)
   const filteredAlerts = useMemo(() => {
     if (!selectedKey) return [];
     const match = (a: AlertSummary) => {
@@ -393,8 +363,6 @@ export default function ComportamientoPage() {
     router.push(`/app/comportamiento/revision/${id}`);
   };
 
-  // ✅ Datos para gráfico mensual (filtradas, últimos 6 meses)
-  // Nota: como ahora SOLO traemos el mes actual, esto seguirá mostrando 0 en meses previos.
   const chartData: ChartPoint[] = useMemo(() => {
     const now = new Date();
     const end = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -434,7 +402,7 @@ export default function ComportamientoPage() {
     b === "HIGH" ? "Crítica" : b === "MEDIUM" ? "Media" : "Baja";
 
   return (
-    <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
+    <div className="flex h-full min-h-0 min-w-0 flex-col space-y-4 pb-16 md:pb-4">
       {/* Header */}
       <div className="space-y-1">
         <div className="flex items-center gap-2">
@@ -449,14 +417,15 @@ export default function ComportamientoPage() {
         </p>
       </div>
 
-      {/* Selector modo (3 partes) */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
-        {/* Pestañas */}
+      {/* Contenedor principal */}
+      <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
+        {/* Tabs + título */}
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-2">
             <span className="text-xs font-medium text-slate-400">Sección</span>
 
-            <div className="flex flex-wrap items-center gap-2">
+            {/* ✅ Responsive tabs: grid en móvil, 3 cols desde sm */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {(["EQUIPO", "INFRAESTRUCTURA", "OPERADOR"] as Mode[]).map((m) => {
                 const active = m === mode;
                 return (
@@ -465,8 +434,7 @@ export default function ComportamientoPage() {
                     type="button"
                     onClick={() => setMode(m)}
                     className={[
-                      "inline-flex items-center justify-center rounded-2xl border px-4 py-3 text-sm font-semibold transition-colors",
-                      "min-w-[140px] sm:min-w-[170px]",
+                      "inline-flex w-full items-center justify-center rounded-2xl border px-4 py-3 text-sm font-semibold transition-colors",
                       active
                         ? "border-indigo-500/60 bg-indigo-600/15 text-indigo-100"
                         : "border-slate-800 bg-slate-950/60 text-slate-200 hover:bg-slate-900",
@@ -486,15 +454,15 @@ export default function ComportamientoPage() {
           </div>
         </div>
 
-        {/* ✅ NUEVO: Filtro de operadores (global) */}
-        <div className="mt-4 grid gap-2 sm:grid-cols-[220px,1fr] sm:items-center">
+        {/* Filtro operador */}
+        <div className="mt-4 grid min-w-0 gap-2 sm:grid-cols-[220px,1fr] sm:items-center">
           <label className="text-xs font-medium text-slate-400">Filtro operador =</label>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
             <select
               value={selectedOperator}
               onChange={(e) => setSelectedOperator(e.target.value)}
-              className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
+              className="h-10 w-full min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
             >
               {operatorOptions.length === 0 ? (
                 <option value={OP_ALL}>{OP_ALL}</option>
@@ -508,7 +476,7 @@ export default function ComportamientoPage() {
             </select>
 
             <span className="text-[11px] text-slate-500">
-              Alertas (mes) con filtro:{" "}
+              Alertas (mes):{" "}
               <span className="font-semibold text-slate-200">
                 {alertsAfterOperatorFilter.length}
               </span>
@@ -516,19 +484,19 @@ export default function ComportamientoPage() {
           </div>
         </div>
 
-        {/* ✅ Gráfico barras (Top 10) - dinámico por modo */}
+        {/* ✅ Top 10: en móvil -> barras horizontales */}
         <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <p className="text-xs font-semibold text-slate-100">{barMeta.title}</p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Basado en todas las alertas del mes actual
+                Basado en alertas del mes actual
                 {selectedOperator !== OP_ALL ? ` (Operador: ${selectedOperator}).` : "."}
                 {isFetchingNextPage ? " Cargando más páginas…" : ""}
               </p>
             </div>
 
-            <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
+            <span className="w-fit rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
               {mode === "EQUIPO"
                 ? "Equipos"
                 : mode === "INFRAESTRUCTURA"
@@ -538,84 +506,82 @@ export default function ComportamientoPage() {
             </span>
           </div>
 
-          <div className="mt-3 h-[220px] w-full">
+          <div className="mt-3 h-[320px] w-full sm:h-[240px]">
             {barData.length === 0 ? (
               <div className="flex h-full items-center justify-center text-xs text-slate-400">
                 No hay datos para graficar.
               </div>
             ) : (
-              <div className="h-full w-full overflow-x-auto">
-                <div className="h-full min-w-[680px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={barData}
-                      margin={{ top: 10, right: 16, left: 0, bottom: 10 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                      <XAxis
-                        dataKey="categoria"
-                        tickLine={false}
-                        axisLine={false}
-                        interval={0}
-                        tick={{ fontSize: 11, fill: "#94a3b8" }}
-                      />
-                      <YAxis
-                        allowDecimals={false}
-                        tickLine={false}
-                        axisLine={false}
-                        width={30}
-                        tick={{ fontSize: 11, fill: "#94a3b8" }}
-                      />
-                      <Tooltip
-                        formatter={(value?: string | number) =>
-                          [`${value ?? ""}`, "Alertas"] as const
-                        }
-                        labelFormatter={(label?: ReactNode) =>
-                          `${barMeta.tooltipLabel}: ${typeof label === "string" ? label : ""}`
-                        }
-                        contentStyle={{
-                          background: "rgba(2, 6, 23, 0.95)",
-                          border: "1px solid rgba(30, 41, 59, 1)",
-                          borderRadius: 12,
-                          color: "#e2e8f0",
-                          fontSize: 12,
-                        }}
-                        labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
-                      />
-                      <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
-                      <Bar
-                        dataKey="total"
-                        name="Alertas"
-                        radius={[10, 10, 0, 0]}
-                        fill="rgba(99, 102, 241, 0.85)"
-                        stroke="rgba(99, 102, 241, 1)"
-                        strokeWidth={1}
-                        isAnimationActive={false}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={barData}
+                  layout="vertical" // ✅ móvil friendly
+                  margin={{ top: 10, right: 16, left: 16, bottom: 10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis
+                    type="number"
+                    allowDecimals={false}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 11, fill: "#94a3b8" }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="categoria"
+                    width={140}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 11, fill: "#94a3b8" }}
+                  />
+                  <Tooltip
+                    formatter={(value?: string | number) =>
+                      [`${value ?? ""}`, "Alertas"] as const
+                    }
+                    labelFormatter={(label?: ReactNode) =>
+                      `${barMeta.tooltipLabel}: ${typeof label === "string" ? label : ""}`
+                    }
+                    contentStyle={{
+                      background: "rgba(2, 6, 23, 0.95)",
+                      border: "1px solid rgba(30, 41, 59, 1)",
+                      borderRadius: 12,
+                      color: "#e2e8f0",
+                      fontSize: 12,
+                    }}
+                    labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
+                  />
+                  <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
+                  <Bar
+                    dataKey="total"
+                    name="Alertas"
+                    radius={[10, 10, 10, 10]}
+                    fill="rgba(99, 102, 241, 0.85)"
+                    stroke="rgba(99, 102, 241, 1)"
+                    strokeWidth={1}
+                    isAnimationActive={false}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </div>
 
           <p className="mt-2 text-[11px] text-slate-500">
-            En Infraestructura se agrupa por área; en Equipo por vehículo; y en Operador
-            por nombre de operador (si no hay nombre =&gt; “Sin nombre”).
+            Infraestructura agrupa por área; Equipo por vehículo; Operador por nombre (si
+            no hay =&gt; “Sin nombre”).
           </p>
         </div>
 
-        {/* Combobox (select) */}
-        <div className="mt-4 grid gap-2 sm:grid-cols-[220px,1fr] sm:items-center">
+        {/* Selector principal */}
+        <div className="mt-4 grid min-w-0 gap-2 sm:grid-cols-[220px,1fr] sm:items-center">
           <label className="text-xs font-medium text-slate-400">
             {labelByMode[mode]} =
           </label>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <select
               value={selectedKey}
               onChange={(e) => setSelectedKey(e.target.value)}
-              className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
+              className="h-10 w-full min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
             >
               {options.length === 0 ? (
                 <option value="">Sin opciones</option>
@@ -628,7 +594,7 @@ export default function ComportamientoPage() {
               )}
             </select>
 
-            <div className="flex items-center justify-between gap-2 sm:justify-start">
+            <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
               <span className="text-[11px] text-slate-500">
                 Coincidencias:{" "}
                 <span className="font-semibold text-slate-200">
@@ -658,37 +624,43 @@ export default function ComportamientoPage() {
           </div>
         </div>
 
-        {/* Mini cuadro de estadísticas (línea con puntos) */}
+        {/* Línea mensual */}
         <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <p className="text-xs font-semibold text-slate-100">
                 Estadística mensual (últimos 6 meses)
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Conteo de alertas para “{selectedKey || "—"}”
+                Conteo para “{selectedKey || "—"}”
                 {selectedOperator !== OP_ALL ? ` (Operador: ${selectedOperator})` : ""}
               </p>
             </div>
 
-            <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
+            <span className="w-fit rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
               Total: {filteredAlerts.length}
             </span>
           </div>
 
-          <div className="mt-2 h-[160px] w-full">
+          <div className="mt-2 h-[180px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={chartData}
                 margin={{ top: 10, right: 16, left: 0, bottom: 0 }}
               >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="mes" tickLine={false} axisLine={false} />
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis
+                  dataKey="mes"
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fontSize: 11, fill: "#94a3b8" }}
+                />
                 <YAxis
                   allowDecimals={false}
                   tickLine={false}
                   axisLine={false}
                   width={28}
+                  tick={{ fontSize: 11, fill: "#94a3b8" }}
                 />
                 <Tooltip
                   formatter={(value?: string | number) =>
@@ -697,6 +669,14 @@ export default function ComportamientoPage() {
                   labelFormatter={(label?: ReactNode) =>
                     `Mes: ${typeof label === "string" ? label : ""}`
                   }
+                  contentStyle={{
+                    background: "rgba(2, 6, 23, 0.95)",
+                    border: "1px solid rgba(30, 41, 59, 1)",
+                    borderRadius: 12,
+                    color: "#e2e8f0",
+                    fontSize: 12,
+                  }}
+                  labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
                 />
                 <Line
                   type="monotone"
@@ -710,27 +690,26 @@ export default function ComportamientoPage() {
           </div>
 
           <p className="mt-2 text-[11px] text-slate-500">
-            Nota: como aquí se trae solo el mes actual, si quieres un gráfico “mejor” te
-            lo cambio a “por día del mes”.
+            Nota: como aquí se trae solo el mes actual, si quieres un gráfico mejor te lo
+            cambio a “por día del mes”.
           </p>
         </div>
       </section>
 
-      {/* Lista de alertas coincidentes */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-900 text-slate-200">
+      {/* Lista */}
+      <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-900 text-slate-200">
               <AlertCircle className="h-4 w-4" />
             </span>
-            <div>
+            <div className="min-w-0">
               <h2 className="text-sm font-semibold text-slate-100">
                 Alertas coincidentes
               </h2>
               <p className="text-[11px] text-slate-500 sm:text-xs">
-                Mostrando alertas del mes que coinciden con{" "}
-                {labelByMode[mode].toLowerCase()} seleccionado
-                {selectedOperator !== OP_ALL ? ` (Operador: ${selectedOperator})` : ""}.
+                Mes actual • {labelByMode[mode].toLowerCase()} seleccionado
+                {selectedOperator !== OP_ALL ? ` • Operador: ${selectedOperator}` : ""}.
               </p>
             </div>
           </div>
@@ -738,7 +717,7 @@ export default function ComportamientoPage() {
           <button
             type="button"
             onClick={handleGoHistory}
-            className="inline-flex items-center gap-1 rounded-xl border border-indigo-600/70 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-600/20"
+            className="inline-flex w-full items-center justify-center gap-1 rounded-xl border border-indigo-600/70 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-600/20 sm:w-auto"
           >
             <ListOrdered className="h-4 w-4" />
             Ver todo
@@ -793,14 +772,15 @@ export default function ComportamientoPage() {
                 key={String(id ?? idx)}
                 className={`border-t border-slate-800 py-3 ${idx === 0 ? "first:border-t-0" : ""}`}
               >
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-col">
-                      <p className="text-sm font-medium text-slate-100">
+                <div className="flex flex-col gap-2">
+                  {/* ✅ fila superior responsive */}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-100">
                         {licensePlate || vehicleCode || (id ? `#${id}` : `#${idx}`)}
                       </p>
 
-                      <p className="text-[11px] text-slate-500">
+                      <p className="mt-1 text-[11px] text-slate-500">
                         {mode === "EQUIPO"
                           ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
                           : mode === "INFRAESTRUCTURA"
@@ -809,14 +789,15 @@ export default function ComportamientoPage() {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    {/* ✅ acciones: en móvil bajan */}
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                       <Button
                         type="button"
                         variant="outline"
                         className="h-8 rounded-xl border-slate-800 bg-slate-950/60 px-3 text-[11px] text-slate-200 hover:bg-slate-900"
                         onClick={() => handleGoRevision(alert)}
                       >
-                        Marcar como revisado
+                        Marcar revisado
                       </Button>
 
                       <span
@@ -831,7 +812,7 @@ export default function ComportamientoPage() {
                     {shortDescription || "Sin descripción."}
                   </p>
 
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                     <span>{isPending ? "Pendiente" : "Atendida"}</span>
                     <span className="text-slate-700">•</span>
                     <span className="truncate">
@@ -839,7 +820,7 @@ export default function ComportamientoPage() {
                     </span>
                   </div>
 
-                  {/* opcional: si quieres seguir mostrando planta como extra */}
+                  {/* opcional */}
                   {/* <p className="text-[11px] text-slate-600">Planta: {getPlantLabel(alert)}</p> */}
                 </div>
               </div>
@@ -847,7 +828,7 @@ export default function ComportamientoPage() {
           })}
       </section>
 
-      <section>
+      <section className="min-w-0">
         <button
           type="button"
           onClick={handleGoSettings}
