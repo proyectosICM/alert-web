@@ -223,3 +223,11 @@ export const importShiftsExcel = async (params: {
 
   return response.data;
 };
+
+export const getShiftsByDateDetail = async (params: {
+  companyId: number;
+  date: string;
+}) => {
+  const response = await api.get<ShiftDetail[]>(`${endpoint}/date/detail`, { params });
+  return response.data;
+};

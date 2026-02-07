@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
   Clock,
@@ -15,11 +15,24 @@ import {
   X,
 } from "lucide-react";
 
-import api from "@/api/apiClient";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
+// ✅ servicios API
+import * as shiftService from "@/api/services/shiftService";
+import type { ShiftDetail, ShiftSummary } from "@/api/services/shiftService";
+
+// ✅ usa el hook DETAIL que ya creaste
+import { useShiftsByDateDetail } from "@/api/hooks/useShifts";
+
+// Opciones estándar
+const LIST_QUERY_OPTIONS = {
+  staleTime: 5_000,
+  gcTime: 5 * 60 * 1000,
+} as const;
+
+// ===== ViewModel compatible con tu UI =====
 type ShiftDto = {
   id: number;
   shiftName?: string | null;
@@ -95,66 +108,327 @@ function formatDateEsPE(ymd: string) {
     .replace(".", "");
 }
 
+// ======== mapeo seguro desde ShiftSummary/ShiftDetail hacia tu view model ========
+type ShiftLike = ShiftSummary | ShiftDetail;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function pickString(r: Record<string, unknown>, key: string): string | null | undefined {
+  const v = r[key];
+  if (typeof v === "string") return v;
+  if (v === null) return null;
+  return undefined;
+}
+
+function pickBoolean(
+  r: Record<string, unknown>,
+  key: string
+): boolean | null | undefined {
+  const v = r[key];
+  if (typeof v === "boolean") return v;
+  if (v === null) return null;
+  return undefined;
+}
+
+function pickNumber(r: Record<string, unknown>, key: string): number | null | undefined {
+  const v = r[key];
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v === null) return null;
+  return undefined;
+}
+
+function pickStringArray(
+  r: Record<string, unknown>,
+  key: string
+): string[] | null | undefined {
+  const v = r[key];
+  if (Array.isArray(v)) {
+    const arr = v.filter((x): x is string => typeof x === "string");
+    return uniq(arr);
+  }
+  if (v === null) return null;
+  return undefined;
+}
+
+function toShiftDto(s: ShiftLike): ShiftDto {
+  const r = isRecord(s) ? s : ({} as Record<string, unknown>);
+  const id =
+    typeof (r as { id?: unknown }).id === "number"
+      ? ((r as { id: number }).id as number)
+      : 0;
+
+  return {
+    id,
+    shiftName: pickString(r, "shiftName") ?? null,
+    rosterDate: pickString(r, "rosterDate") ?? null,
+    active: pickBoolean(r, "active") ?? null,
+    batchId: pickString(r, "batchId") ?? null,
+
+    responsibleDnis: pickStringArray(r, "responsibleDnis") ?? null,
+    vehiclePlates: pickStringArray(r, "vehiclePlates") ?? null,
+
+    fleetId: pickNumber(r, "fleetId") ?? null,
+    fleetName: pickString(r, "fleetName") ?? null,
+
+    fleets: pickStringArray(r, "fleets") ?? null,
+    fleetNames: pickStringArray(r, "fleetNames") ?? null,
+  };
+}
+
+// ===== UI: tabs internos por tarjeta =====
+type ShiftTab = "RESP" | "PLATES" | "FLEETS";
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  count?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+        active
+          ? "border-indigo-500/40 bg-indigo-600/15 text-indigo-100"
+          : "border-slate-800 bg-slate-950/60 text-slate-300 hover:bg-slate-900"
+      )}
+    >
+      {icon}
+      <span>{label}</span>
+      {typeof count === "number" && (
+        <span
+          className={cn(
+            "ml-1 rounded-lg px-1.5 py-0.5 text-[10px] font-bold",
+            active ? "bg-indigo-500/20 text-indigo-100" : "bg-slate-900 text-slate-200"
+          )}
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ListChips({ items }: { items: string[] }) {
+  if (items.length === 0) return <p className="text-[12px] text-slate-500">—</p>;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((x) => (
+        <span
+          key={x}
+          className="rounded-full border border-slate-800 bg-slate-950/60 px-3 py-1 text-[11px] font-semibold text-slate-200"
+          title={x}
+        >
+          {x}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ShiftCard({
+  shift,
+  variant,
+  tab,
+  onTab,
+}: {
+  shift: ShiftDto;
+  variant: "preview" | "full";
+  tab: ShiftTab;
+  onTab: (next: ShiftTab) => void;
+}) {
+  const name = normalizeShiftName(shift.shiftName);
+  const dnis = Array.isArray(shift.responsibleDnis) ? uniq(shift.responsibleDnis) : [];
+  const plates = Array.isArray(shift.vehiclePlates) ? uniq(shift.vehiclePlates) : [];
+  const fleets = getFleetLabels(shift);
+
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border border-slate-800 bg-slate-950/60 p-4",
+        variant === "preview" ? "w-full md:w-[320px] md:shrink-0" : ""
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-100">{name}</p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            ID: {shift.id}
+            {shift.batchId ? ` • Batch: ${shift.batchId}` : ""}
+            {shift.active ? " • Activo" : ""}
+          </p>
+        </div>
+
+        <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1 text-[11px] font-semibold text-slate-200">
+          {plates.length}
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <TabButton
+          active={tab === "RESP"}
+          onClick={() => onTab("RESP")}
+          icon={<Users className="h-3.5 w-3.5" />}
+          label="Responsables"
+          count={dnis.length}
+        />
+        <TabButton
+          active={tab === "PLATES"}
+          onClick={() => onTab("PLATES")}
+          icon={<Car className="h-3.5 w-3.5" />}
+          label="Placas"
+          count={plates.length}
+        />
+        <TabButton
+          active={tab === "FLEETS"}
+          onClick={() => onTab("FLEETS")}
+          icon={<Layers className="h-3.5 w-3.5" />}
+          label="Flotas"
+          count={fleets.length}
+        />
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+        {tab === "RESP" && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-100">
+              Responsables (DNI) <span className="text-slate-500">({dnis.length})</span>
+            </p>
+
+            {variant === "full" && dnis.length > 0 ? (
+              <div className="overflow-hidden rounded-xl border border-slate-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-950/80">
+                    <tr className="text-left text-[11px] tracking-wide text-slate-400 uppercase">
+                      <th className="px-3 py-2">DNI</th>
+                      <th className="px-3 py-2 text-right">Flota</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dnis.map((dni) => (
+                      <tr key={dni} className="border-t border-slate-800">
+                        <td className="px-3 py-2 text-slate-100">{dni}</td>
+                        <td className="px-3 py-2 text-right text-[12px] text-slate-400">
+                          {fleets[0] ?? "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <ListChips items={dnis} />
+            )}
+          </div>
+        )}
+
+        {tab === "PLATES" && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-100">
+              Placas a cargo <span className="text-slate-500">({plates.length})</span>
+            </p>
+            <ListChips items={plates} />
+          </div>
+        )}
+
+        {tab === "FLEETS" && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-100">
+              Flotas <span className="text-slate-500">({fleets.length})</span>
+            </p>
+            {fleets.length === 0 ? (
+              <p className="text-[12px] text-slate-500">Sin flota asignada.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {fleets.map((f) => (
+                  <span
+                    key={f}
+                    className="rounded-full border border-indigo-500/30 bg-indigo-600/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-100"
+                    title={f}
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {fleets.length > 1 && tab !== "FLEETS" && (
+        <p className="mt-2 text-[11px] text-slate-500">+{fleets.length - 1} flotas más</p>
+      )}
+    </div>
+  );
+}
+
 export default function TurnosPage() {
   const queryClient = useQueryClient();
   const auth = getAuthDataWeb();
-  const companyId = auth?.companyId;
+
+  const companyId = useMemo(() => {
+    const raw = auth?.companyId as unknown;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }, [auth?.companyId]);
 
   const [date, setDate] = useState<string>(() => todayYmdLocal());
 
-  // Dropzone
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
 
-  const endpointListByDate = "/api/shifts/date";
-  const endpointImportExcel = "/api/shifts/import-excel";
+  // tabs por tarjeta
+  const [previewTabs, setPreviewTabs] = useState<Record<number, ShiftTab>>({});
+  const [fullTabs, setFullTabs] = useState<Record<number, ShiftTab>>({});
+  const getTab = (map: Record<number, ShiftTab>, id: number) => map[id] ?? "RESP";
 
-  const shiftsQuery = useQuery<ShiftDto[], Error>({
-    queryKey: ["shifts", "date", companyId, date],
-    enabled: !!companyId && !!date,
-    queryFn: async () => {
-      const res = await api.get<ShiftDto[]>(endpointListByDate, {
-        params: { companyId, date },
+  // ✅ AHORA: LIST BY DATE DETAIL
+  const shiftsQuery = useShiftsByDateDetail({ companyId, date });
+
+  // IMPORT EXCEL
+  const importMutation = useMutation<
+    ShiftDetail[],
+    Error,
+    { companyId: number; date: string; file: File }
+  >({
+    mutationFn: (args) => shiftService.importShiftsExcel(args),
+    onSuccess: (_saved, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["shifts"] });
+      queryClient.invalidateQueries({ queryKey: ["shifts", "current", vars.companyId] });
+
+      // ✅ invalida la key detail
+      queryClient.invalidateQueries({
+        queryKey: ["shifts", "date", "detail", vars.companyId, vars.date],
       });
-      return Array.isArray(res.data) ? res.data : [];
-    },
-    staleTime: 10_000,
-    gcTime: 5 * 60 * 1000,
-  });
-
-  const importMutation = useMutation<ShiftDto[], Error, { file: File }>({
-    mutationFn: async ({ file }) => {
-      if (!companyId) throw new Error("companyId inválido");
-      if (!date) throw new Error("date inválido");
-
-      const form = new FormData();
-      form.append("file", file);
-
-      const res = await api.post<ShiftDto[]>(endpointImportExcel, form, {
-        params: { companyId, date },
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      return Array.isArray(res.data) ? res.data : [];
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["shifts", "date", companyId, date] });
     },
   });
 
-  const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
+  // Adaptamos a tu UI
+  const shifts = useMemo<ShiftDto[]>(
+    () => (shiftsQuery.data ?? []).map(toShiftDto),
+    [shiftsQuery.data]
+  );
 
-  const previewShifts = useMemo(() => {
+  const importedPreview = useMemo<ShiftDto[] | null>(() => {
     const imported = importMutation.data;
-    if (Array.isArray(imported) && imported.length > 0) return imported;
-    return shifts;
-  }, [importMutation.data, shifts]);
-
-  const previewMode = useMemo(() => {
-    const imported = importMutation.data;
-    return Array.isArray(imported) && imported.length > 0 ? "IMPORT" : "DAY";
+    if (!Array.isArray(imported) || imported.length === 0) return null;
+    return imported.map(toShiftDto);
   }, [importMutation.data]);
+
+  const previewShifts = importedPreview ?? shifts;
+  const previewMode = importedPreview ? "IMPORT" : "DAY";
 
   const handlePickFile = () => inputRef.current?.click();
 
@@ -208,12 +482,14 @@ export default function TurnosPage() {
   };
 
   const handleImport = () => {
-    if (!file) return;
-    importMutation.mutate({ file });
+    if (!file || !companyId || !date) return;
+    importMutation.mutate({ companyId, date, file });
   };
 
   const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["shifts", "date", companyId, date] });
+    // si estabas viendo preview IMPORT, vuelve a DAY
+    if (importMutation.data) importMutation.reset();
+    shiftsQuery.refetch();
   };
 
   if (!companyId) {
@@ -237,8 +513,7 @@ export default function TurnosPage() {
         </p>
       </div>
 
-      {/* ✅ ARRIBA: en web (md+) SIEMPRE 2 columnas */}
-      {/* ✅ FIX: NO usar coma en grid-cols-[...]. Debe ser con espacio (usa _). */}
+      {/* ARRIBA: 2 columnas */}
       <section className="grid min-w-0 items-start gap-3 md:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
         {/* LEFT: Excel */}
         <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5">
@@ -353,17 +628,17 @@ export default function TurnosPage() {
           </p>
         </div>
 
-        {/* RIGHT: ✅ turnos alineados HORIZONTALMENTE en web */}
+        {/* RIGHT: Preview cards */}
         <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5">
           <div className="flex items-start justify-between gap-2">
             <div>
               <p className="text-sm font-semibold text-slate-100">
-                {previewMode === "IMPORT" ? "Preview importado" : "Turnos de hoy"}
+                {previewMode === "IMPORT" ? "Preview importado" : "Turnos del día"}
               </p>
               <p className="mt-1 text-[12px] text-slate-500">
                 {previewMode === "IMPORT"
                   ? "Esto es lo que devolvió el backend al importar."
-                  : "Resumen rápido (tarjetas alineadas)."}
+                  : "Resumen rápido (con pestañas)."}
               </p>
             </div>
 
@@ -403,78 +678,16 @@ export default function TurnosPage() {
             </div>
           )}
 
-          {/* ✅ mobile: vertical (col) | md+: horizontal scroll */}
           <div className="mt-4 flex flex-col gap-3 md:flex-row md:flex-nowrap md:overflow-x-auto md:pb-2">
-            {previewShifts.map((s) => {
-              const name = normalizeShiftName(s.shiftName);
-              const dnis = Array.isArray(s.responsibleDnis)
-                ? uniq(s.responsibleDnis)
-                : [];
-              const plates = Array.isArray(s.vehiclePlates) ? uniq(s.vehiclePlates) : [];
-              const fleets = getFleetLabels(s);
-
-              return (
-                <div
-                  key={String(s.id)}
-                  className={cn(
-                    "rounded-2xl border border-slate-800 bg-slate-950/60 p-4",
-                    "w-full md:w-[320px] md:shrink-0"
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-100">
-                        {name}
-                      </p>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        ID: {s.id}
-                        {s.active ? " • Activo" : ""}
-                      </p>
-                    </div>
-
-                    <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1 text-[11px] font-semibold text-slate-200">
-                      {plates.length}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 space-y-2 text-[12px] text-slate-300">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1 text-slate-400">
-                        <Users className="h-4 w-4" />
-                        Responsables
-                      </span>
-                      <span className="font-semibold text-slate-100">{dnis.length}</span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1 text-slate-400">
-                        <Car className="h-4 w-4" />
-                        Placas
-                      </span>
-                      <span className="font-semibold text-slate-100">
-                        {plates.length}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1 text-slate-400">
-                        <Layers className="h-4 w-4" />
-                        Flota
-                      </span>
-                      <span className="min-w-0 truncate text-right text-[12px] text-slate-200">
-                        {fleets[0] ?? "—"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {fleets.length > 1 && (
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      +{fleets.length - 1} flotas más
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+            {previewShifts.map((s) => (
+              <ShiftCard
+                key={String(s.id)}
+                shift={s}
+                variant="preview"
+                tab={getTab(previewTabs, s.id)}
+                onTab={(next) => setPreviewTabs((prev) => ({ ...prev, [s.id]: next }))}
+              />
+            ))}
           </div>
 
           {previewShifts.length > 0 && (
@@ -504,6 +717,8 @@ export default function TurnosPage() {
                 onChange={(e) => {
                   setDate(e.target.value);
                   importMutation.reset();
+                  setPreviewTabs({});
+                  setFullTabs({});
                 }}
                 className={cn(
                   "h-9 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none",
@@ -535,7 +750,7 @@ export default function TurnosPage() {
           <div>
             <p className="text-sm font-semibold text-slate-100">Turnos del día</p>
             <p className="mt-1 text-[12px] text-slate-500">
-              Detalle de responsables y placas para{" "}
+              Detalle por pestañas para{" "}
               <span className="font-semibold text-slate-200">{formatDateEsPE(date)}</span>
             </p>
           </div>
@@ -571,105 +786,15 @@ export default function TurnosPage() {
         )}
 
         <div className="mt-4 space-y-3">
-          {shifts.map((s) => {
-            const shiftName = normalizeShiftName(s.shiftName);
-            const dnis = Array.isArray(s.responsibleDnis) ? uniq(s.responsibleDnis) : [];
-            const plates = Array.isArray(s.vehiclePlates) ? uniq(s.vehiclePlates) : [];
-            const fleets = getFleetLabels(s);
-
-            return (
-              <div
-                key={String(s.id)}
-                className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4"
-              >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-100">
-                      {shiftName}
-                    </p>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      ID: {s.id}
-                      {s.batchId ? ` • Batch: ${s.batchId}` : ""}
-                      {s.active ? " • Activo" : ""}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {fleets.length === 0 ? (
-                      <span className="rounded-full border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-400">
-                        Sin flota asignada
-                      </span>
-                    ) : (
-                      fleets.map((f) => (
-                        <span
-                          key={f}
-                          className="rounded-full border border-indigo-500/30 bg-indigo-600/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-100"
-                          title={f}
-                        >
-                          {f}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <p className="text-xs font-semibold text-slate-100">
-                    Responsables (DNI){" "}
-                    <span className="text-slate-500">({dnis.length})</span>
-                  </p>
-
-                  {dnis.length === 0 ? (
-                    <p className="mt-1 text-[12px] text-slate-500">Sin DNIs.</p>
-                  ) : (
-                    <div className="mt-2 overflow-hidden rounded-xl border border-slate-800">
-                      <table className="w-full text-sm">
-                        <thead className="bg-slate-950/80">
-                          <tr className="text-left text-[11px] tracking-wide text-slate-400 uppercase">
-                            <th className="px-3 py-2">DNI</th>
-                            <th className="px-3 py-2 text-right">Flota</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dnis.map((dni) => (
-                            <tr key={dni} className="border-t border-slate-800">
-                              <td className="px-3 py-2 text-slate-100">{dni}</td>
-                              <td className="px-3 py-2 text-right text-[12px] text-slate-400">
-                                {fleets[0] ?? "—"}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-4">
-                  <p className="text-xs font-semibold text-slate-100">
-                    Placas a cargo{" "}
-                    <span className="text-slate-500">({plates.length})</span>
-                  </p>
-
-                  {plates.length === 0 ? (
-                    <p className="mt-1 text-[12px] text-slate-500">Sin placas.</p>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {plates.map((p) => (
-                        <span
-                          key={p}
-                          className="rounded-full border border-slate-800 bg-slate-950/60 px-3 py-1 text-[11px] font-semibold text-slate-200"
-                          title={p}
-                        >
-                          {p}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {shifts.map((s) => (
+            <ShiftCard
+              key={String(s.id)}
+              shift={s}
+              variant="full"
+              tab={getTab(fullTabs, s.id)}
+              onTab={(next) => setFullTabs((prev) => ({ ...prev, [s.id]: next }))}
+            />
+          ))}
         </div>
 
         <p className="mt-4 text-[11px] text-slate-500">

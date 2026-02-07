@@ -243,3 +243,19 @@ export const useImportShiftsExcel = () => {
     },
   });
 };
+
+// hooks/useShifts.ts
+export const useShiftsByDateDetail = (params: { companyId?: number; date?: string }) => {
+  const { companyId, date } = params;
+
+  return useQuery<ShiftDetail[], Error>({
+    queryKey: ["shifts", "date", "detail", companyId, date],
+    enabled: !!companyId && !!date,
+    queryFn: () =>
+      shiftService.getShiftsByDateDetail({
+        companyId: companyId as number,
+        date: date as string,
+      }),
+    ...LIST_QUERY_OPTIONS,
+  });
+};
