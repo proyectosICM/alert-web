@@ -3,50 +3,71 @@ import type { PageResponse } from "./notificationGroupService";
 
 /**
  * Endpoint base del AlertRevisionController
- * (coincide con @RequestMapping("/api/alert-revisions"))
+ * @RequestMapping("/api/alert-revisions")
  */
 const endpoint = "/api/alert-revisions";
 
-// ========== DTOs (ajusta campos a tu backend real) ==========
-
+// ========== DTOs ==========
 export type AlertRevisionDetail = {
   id: number;
   alertId: number;
 
-  // campos típicos (ajusta a tu dto real)
-  notes?: string | null;
-  status?: string | null;
+  companyId: number;
+
+  vehiculo?: string | null;
+  planta?: string | null;
+  area?: string | null;
+  operador?: string | null;
+
+  motivoFalla?: string | null;
+  fechaFalla?: string | null; // "YYYY-MM-DD"
+  accionTomada?: string | null;
+
+  revisorNombre?: string | null;
+  observacionAdicional?: string | null;
 
   createdAt?: string; // ISO
-  updatedAt?: string; // ISO
 };
 
 export type AlertRevisionSummary = {
   id: number;
   alertId: number;
 
-  status?: string | null;
+  vehiculo?: string | null;
+  planta?: string | null;
+  area?: string | null;
+  operador?: string | null;
+
+  motivoFalla?: string | null;
+  fechaFalla?: string | null;
+
+  revisorNombre?: string | null;
 
   createdAt?: string; // ISO
-  updatedAt?: string; // ISO
 };
 
 export type CreateAlertRevisionRequest = {
   alertId: number;
 
-  notes?: string | null;
-  status?: string | null;
+  vehiculo: string;
+  planta: string;
+  area?: string | null;
+  operador: string;
+
+  motivoFalla: string;
+  fechaFalla: string; // "YYYY-MM-DD"
+  accionTomada: string;
+
+  revisorNombre: string;
+  observacionAdicional?: string | null;
 };
 
-export type UpdateAlertRevisionRequest = {
-  notes?: string | null;
-  status?: string | null;
-};
+export type UpdateAlertRevisionRequest = Partial<
+  Omit<CreateAlertRevisionRequest, "alertId">
+>;
 
 // Backend: public record ExistsResponse(boolean exists) {}
-export type ExistsResponse = {
-  exists: boolean;
-};
+export type ExistsResponse = { exists: boolean };
 
 // ========== SERVICES ==========
 
@@ -93,15 +114,12 @@ export const getAlertRevisions = async (params: {
   companyId: number;
   page?: number;
   size?: number;
-  sort?: string; // opcional
+  sort?: string;
 }) => {
   const { companyId, ...query } = params;
 
   const response = await api.get<PageResponse<AlertRevisionSummary>>(endpoint, {
-    params: {
-      companyId,
-      ...query,
-    },
+    params: { companyId, ...query },
   });
 
   return response.data;
@@ -113,18 +131,13 @@ export const getAlertRevisionsByAlert = async (params: {
   alertId: number;
   page?: number;
   size?: number;
-  sort?: string; // opcional
+  sort?: string;
 }) => {
   const { companyId, alertId, ...query } = params;
 
   const response = await api.get<PageResponse<AlertRevisionSummary>>(
     `${endpoint}/alert/${alertId}`,
-    {
-      params: {
-        companyId,
-        ...query,
-      },
-    }
+    { params: { companyId, ...query } }
   );
 
   return response.data;
@@ -139,16 +152,12 @@ export const updateAlertRevision = async (params: {
   const response = await api.patch<AlertRevisionDetail>(
     `${endpoint}/${params.id}`,
     params.data,
-    {
-      params: { companyId: params.companyId },
-    }
+    { params: { companyId: params.companyId } }
   );
   return response.data;
 };
 
 // DELETE /api/alert-revisions/{id}?companyId=...
 export const deleteAlertRevision = async (companyId: number, id: number) => {
-  await api.delete(`${endpoint}/${id}`, {
-    params: { companyId },
-  });
+  await api.delete(`${endpoint}/${id}`, { params: { companyId } });
 };

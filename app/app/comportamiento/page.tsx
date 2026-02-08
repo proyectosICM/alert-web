@@ -41,6 +41,8 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
 /**
  * ✅ Tipos auxiliares para evitar `any`
  * (tolerante a campos alternativos del backend)
+ *
+ * NOTA: `reviewed` ya viene en AlertSummary (DTO). Aquí NO lo duplicamos.
  */
 type AlertExtras = {
   id?: string | number;
@@ -75,6 +77,11 @@ type AlertLike = AlertSummary & Partial<AlertExtras>;
 function getAlertId(a: AlertSummary): string | number | undefined {
   const x = a as AlertLike;
   return x.id ?? x.alertId ?? a.id;
+}
+
+// ✅ Ya revisada: ahora viene directo del backend como `reviewed`
+function isAlertReviewed(a: AlertSummary): boolean {
+  return !!a.reviewed;
 }
 
 // ---- Helpers para “leer” campos (tolerante a backend) ----
@@ -353,7 +360,34 @@ export default function ComportamientoPage() {
   const handleGoRevision = (alert: AlertSummary) => {
     const id = getAlertId(alert);
     if (id === undefined || id === null) return;
+
+    try {
+      sessionStorage.setItem(
+        `alerty:selected_alert_${String(id)}`,
+        JSON.stringify(alert)
+      );
+    } catch {
+      // ignore
+    }
+
     router.push(`/app/comportamiento/revision/${id}`);
+  };
+
+  // ✅ NUEVO: ir al detalle (similar a tu /alerts/[id], pero dentro de /comportamiento)
+  const handleGoDetail = (alert: AlertSummary) => {
+    const id = getAlertId(alert);
+    if (id === undefined || id === null) return;
+
+    try {
+      sessionStorage.setItem(
+        `alerty:selected_alert_${String(id)}`,
+        JSON.stringify(alert)
+      );
+    } catch {
+      // ignore
+    }
+
+    router.push(`/app/comportamiento/detalle/${id}`);
   };
 
   // Datos para gráfico mensual (últimos 6 meses)
@@ -773,6 +807,7 @@ export default function ComportamientoPage() {
             const isPending = !alert.acknowledged;
 
             const id = getAlertId(alert);
+            const reviewed = isAlertReviewed(alert);
 
             return (
               <div
@@ -796,14 +831,31 @@ export default function ComportamientoPage() {
                     </div>
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                      {/* ✅ NUEVO: Detalles */}
                       <Button
                         type="button"
                         variant="outline"
                         className="h-9 w-full rounded-xl border-slate-800 bg-slate-950/60 px-3 text-[11px] text-slate-200 hover:bg-slate-900 sm:h-8 sm:w-auto"
-                        onClick={() => handleGoRevision(alert)}
+                        onClick={() => handleGoDetail(alert)}
                       >
-                        Marcar como revisado
+                        Detalles
                       </Button>
+
+                      {/* ✅ Si ya está revisada: no mostrar botón */}
+                      {!reviewed ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 w-full rounded-xl border-slate-800 bg-slate-950/60 px-3 text-[11px] text-slate-200 hover:bg-slate-900 sm:h-8 sm:w-auto"
+                          onClick={() => handleGoRevision(alert)}
+                        >
+                          Marcar como revisado
+                        </Button>
+                      ) : (
+                        <span className="inline-flex w-fit items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
+                          Revisada
+                        </span>
+                      )}
 
                       <span
                         className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${severityStyles[sev]}`}

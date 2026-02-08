@@ -42,6 +42,7 @@ export type AlertDetail = {
   rawPayload: string;
 
   acknowledged: boolean;
+  reviewed: boolean;
 };
 
 export type AlertSummary = {
@@ -62,6 +63,7 @@ export type AlertSummary = {
   receivedAt: string;
 
   acknowledged: boolean;
+  reviewed: boolean;
 };
 
 // ====== Requests (Create / Update) ======

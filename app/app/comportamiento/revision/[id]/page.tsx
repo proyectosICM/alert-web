@@ -3,17 +3,18 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Save, Upload, X, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Save, Upload, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
-import { useAlertsByUser } from "@/api/hooks/useAlerts";
-import type { AlertSummary } from "@/api/services/alertService";
 import { stripHtml } from "@/lib/utils";
+
+import type { AlertSummary } from "@/api/services/alertService";
+import { useAlert } from "@/api/hooks/useAlerts";
+import { useCreateAlertRevision } from "@/api/hooks/useAlertRevisions";
 
 /**
  * ✅ Tipos auxiliares para evitar `any`
- * (tolerante a campos alternativos del backend)
  */
 type AlertExtras = {
   id?: string | number;
@@ -23,25 +24,74 @@ type AlertExtras = {
   licensePlate?: string | null;
   vehicleCode?: string | null;
 
-  plantName?: string | null;
-  planta?: string | null;
-  siteName?: string | null;
-  locationName?: string | null;
+  plant?: string | null;
+  area?: string | null;
 
   operatorName?: string | null;
   operador?: string | null;
   driverName?: string | null;
   userName?: string | null;
+
+  alertType?: string | null;
+
+  // company
+  companyId?: number | string | null;
+  company?: { id?: number | string | null } | null;
+
+  // ✅ flags de “ya revisada”
+  reviewed?: boolean | null;
+  revised?: boolean | null;
+  revisionDone?: boolean | null;
+  revisionCompleted?: boolean | null;
+  hasRevision?: boolean | null;
+  revision?: boolean | null;
+  alertRevision?: unknown | null; // si tu backend manda el objeto revisión
+
+  // extras comunes del detalle
+  eventTime?: string | null;
 };
 
 type AlertLike = AlertSummary & Partial<AlertExtras>;
+
+function toNumberOrUndefined(v: unknown): number | undefined {
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+function getCompanyIdFromAlert(a: AlertSummary | null): number | undefined {
+  if (!a) return undefined;
+  const x = a as AlertLike;
+  return toNumberOrUndefined(x.companyId) ?? toNumberOrUndefined(x.company?.id);
+}
+
+function isAlertReviewed(a: AlertSummary | null): boolean {
+  if (!a) return false;
+  const x = a as AlertLike;
+
+  const flag =
+    x.reviewed ??
+    x.revised ??
+    x.revisionDone ??
+    x.revisionCompleted ??
+    x.hasRevision ??
+    x.revision;
+
+  if (typeof flag === "boolean") return flag;
+
+  if (x.alertRevision != null) return true;
+
+  return false;
+}
 
 function getAlertId(a: AlertSummary): string | number | undefined {
   const x = a as AlertLike;
   return x.id ?? x.alertId ?? x.uuid ?? a.id;
 }
 
-// ---- Helpers tolerantes (sin any) ----
 function getVehicleLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const lp = stripHtml(x.licensePlate ?? a.licensePlate ?? "");
@@ -49,15 +99,12 @@ function getVehicleLabel(a: AlertSummary) {
   const id = getAlertId(a);
   return lp || vc || (id !== undefined ? `#${id}` : "");
 }
-function getPlantLabel(a: AlertSummary) {
+
+function getAreaLabel(a: AlertSummary) {
   const x = a as AlertLike;
-  const plant =
-    stripHtml(x.plantName ?? "") ||
-    stripHtml(x.planta ?? "") ||
-    stripHtml(x.siteName ?? "") ||
-    stripHtml(x.locationName ?? "");
-  return plant || "";
+  return stripHtml(x.area ?? a.area ?? "") || "";
 }
+
 function getOperatorLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const op =
@@ -68,7 +115,20 @@ function getOperatorLabel(a: AlertSummary) {
   return op || "";
 }
 
-// ---- Tipo del formulario (frontend) ----
+function getAlertTypeLabel(a: AlertSummary) {
+  const x = a as AlertLike;
+  return stripHtml(x.alertType ?? a.alertType ?? "") || "";
+}
+
+function toYyyyMmDd(iso?: string | null) {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(
+    dt.getDate()
+  ).padStart(2, "0")}`;
+}
+
 type RevisionForm = {
   vehiculo: string;
   planta: string;
@@ -81,36 +141,69 @@ type RevisionForm = {
   fotos: File[];
 };
 
+// ✅ PATCH: tipo mínimo para el payload (evita `as any`)
+type CreateRevisionPayload = {
+  companyId: number;
+  alertId: number;
+  vehiculo: string;
+  planta: string;
+  area: string | null;
+  operador: string;
+  motivoFalla: string;
+  fechaFalla: string;
+  accionTomada: string;
+  revisorNombre: string;
+  observacionAdicional: string | null;
+};
+
 export default function RevisionAlertPage() {
   const router = useRouter();
   const params = useParams<{ id: string | string[] }>();
 
   const idParam = params?.id;
-  const alertId = Array.isArray(idParam) ? idParam[0] : idParam;
+  const alertIdStr = Array.isArray(idParam) ? idParam[0] : idParam;
+  const alertId = alertIdStr ? Number(alertIdStr) : NaN;
+  const alertIdSafe = Number.isFinite(alertId) ? alertId : undefined;
 
   const auth = getAuthDataWeb();
-  const companyId = auth?.companyId;
-  const userId = auth?.userId;
+  const companyIdAuth = toNumberOrUndefined(auth?.companyId);
 
-  // Traemos alertas del usuario para encontrar la alerta por ID (rápido para arrancar).
-  // Ideal: tener endpoint GET /alerts/{id} en backend.
-  const { data, isLoading, isError, error } = useAlertsByUser({
-    companyId,
-    userId,
-    page: 0,
-    size: 200, // sube si lo necesitas para que incluya el ID
-  });
+  const [selectedAlert, setSelectedAlert] = useState<AlertSummary | null>(null);
 
-  const alerts: AlertSummary[] = useMemo(() => data?.content ?? [], [data]);
+  useEffect(() => {
+    if (!alertIdStr) return;
+    try {
+      const raw = sessionStorage.getItem(`alerty:selected_alert_${alertIdStr}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as AlertSummary;
+      setSelectedAlert(parsed);
+    } catch {
+      // ignore
+    }
+  }, [alertIdStr]);
 
-  const alert = useMemo(() => {
-    if (!alertId) return undefined;
-    const found = alerts.find((x) => {
-      const xid = getAlertId(x);
-      return xid !== undefined && String(xid) === String(alertId);
-    });
-    return found;
-  }, [alerts, alertId]);
+  const {
+    data: alertDetail,
+    isLoading: isLoadingDetail,
+    isError,
+    error,
+  } = useAlert(companyIdAuth, alertIdSafe);
+
+  const alert: AlertSummary | null = useMemo(() => {
+    if (alertDetail) return alertDetail as unknown as AlertSummary;
+    if (selectedAlert) return selectedAlert;
+    return null;
+  }, [alertDetail, selectedAlert]);
+
+  const companyIdFinalMaybe = useMemo(() => {
+    return (
+      getCompanyIdFromAlert(alertDetail as unknown as AlertSummary | null) ??
+      getCompanyIdFromAlert(selectedAlert) ??
+      companyIdAuth
+    );
+  }, [alertDetail, selectedAlert, companyIdAuth]);
+
+  const alreadyReviewed = useMemo(() => isAlertReviewed(alert), [alert]);
 
   const [form, setForm] = useState<RevisionForm>({
     vehiculo: "",
@@ -125,47 +218,101 @@ export default function RevisionAlertPage() {
   });
 
   const [saving, setSaving] = useState(false);
-  const [savedOk, setSavedOk] = useState(false);
   const [localError, setLocalError] = useState<string>("");
 
-  // Prefill desde la alerta
+  const createRevision = useCreateAlertRevision();
+
+  // ✅ PATCH: evitar `(alert as any).eventTime`
   useEffect(() => {
     if (!alert) return;
 
-    const dt = alert.eventTime ? new Date(alert.eventTime) : null;
-    const yyyyMmDd =
-      dt && !Number.isNaN(dt.getTime())
-        ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(
-            dt.getDate()
-          ).padStart(2, "0")}`
-        : "";
+    const vehiculo = getVehicleLabel(alert);
+    const area = getAreaLabel(alert);
+    const operador = getOperatorLabel(alert);
+    const motivo = getAlertTypeLabel(alert);
+
+    const a = alert as AlertLike;
+    const fecha = toYyyyMmDd(a.eventTime ?? null);
 
     setForm((prev) => ({
       ...prev,
-      vehiculo: getVehicleLabel(alert) || prev.vehiculo,
-      planta: getPlantLabel(alert) || prev.planta,
-      operador: getOperatorLabel(alert) || prev.operador,
-      fechaFalla: yyyyMmDd || prev.fechaFalla,
+      vehiculo: vehiculo || prev.vehiculo,
+      planta: area || prev.planta,
+      operador: operador || prev.operador,
+      motivoFalla: motivo || prev.motivoFalla,
+      fechaFalla: fecha || prev.fechaFalla,
     }));
   }, [alert]);
 
-  if (!companyId || !userId) {
+  const headerId = alertIdStr ? `#${alertIdStr}` : "—";
+
+  if (!companyIdFinalMaybe) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-slate-400">
-        No hay empresa o usuario válido. Vuelve a iniciar sesión.
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-400">
+        <div>No hay empresa válida para esta alerta.</div>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-2 h-9 rounded-xl border-slate-800 bg-slate-950/60 px-3 text-xs text-slate-200 hover:bg-slate-900"
+          onClick={() => router.back()}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver
+        </Button>
+      </div>
+    );
+  }
+
+  const companyIdFinal: number = companyIdFinalMaybe;
+
+  if (alreadyReviewed) {
+    return (
+      <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-slate-400">Revisión de alerta</p>
+            <h1 className="text-lg font-semibold tracking-tight text-slate-100 sm:text-xl">
+              Alerta ya revisada {headerId}
+            </h1>
+            <p className="max-w-2xl text-xs text-slate-400 sm:text-sm">
+              Esta alerta ya tiene revisión registrada, por eso no se muestra el
+              formulario.
+            </p>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 rounded-xl border-slate-800 bg-slate-950/60 px-3 text-xs text-slate-200 hover:bg-slate-900"
+            onClick={() => router.back()}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver
+          </Button>
+        </div>
+
+        {isLoadingDetail && (
+          <p className="text-[11px] text-slate-500">Cargando detalle…</p>
+        )}
+
+        {isError && (
+          <div className="rounded-2xl border border-rose-800/60 bg-rose-600/10 p-3 text-xs text-rose-200">
+            Error: {error?.message ?? "No se pudo obtener la alerta."}
+          </div>
+        )}
       </div>
     );
   }
 
   const setField = <K extends keyof RevisionForm>(key: K, value: RevisionForm[K]) => {
-    setSavedOk(false);
     setLocalError("");
     setForm((p) => ({ ...p, [key]: value }));
   };
 
   function validate(): string {
+    if (!Number.isFinite(alertId)) return "alertId inválido.";
     if (!form.vehiculo.trim()) return "El vehículo es obligatorio.";
-    if (!form.planta.trim()) return "La planta es obligatoria.";
+    if (!form.planta.trim()) return "La planta (por ahora área) es obligatoria.";
     if (!form.operador.trim()) return "El nombre del operador es obligatorio.";
     if (!form.motivoFalla.trim()) return "El motivo de falla es obligatorio.";
     if (!form.fechaFalla.trim()) return "La fecha de la falla es obligatoria.";
@@ -183,30 +330,45 @@ export default function RevisionAlertPage() {
 
     setSaving(true);
     setLocalError("");
-    setSavedOk(false);
 
     try {
-      // ✅ Aquí normalmente mandarías al backend.
-      // Como no me pasaste endpoint, lo dejo listo para conectar.
-      //
-      // Ejemplo:
-      // const fd = new FormData();
-      // fd.append("alertId", String(alertId));
-      // fd.append("vehiculo", form.vehiculo);
-      // ...
-      // form.fotos.forEach((f) => fd.append("fotos", f));
-      // await fetch("/api/revisiones", { method: "POST", body: fd });
+      // ✅ PATCH: sin `as any` (payload tipado)
+      const payload: CreateRevisionPayload = {
+        companyId: companyIdFinal,
+        alertId,
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 450)); // simulación
-      setSavedOk(true);
-    } catch {
-      setLocalError("No se pudo guardar la revisión.");
+        vehiculo: form.vehiculo.trim(),
+        planta: form.planta.trim(),
+        area: alert ? getAreaLabel(alert) || null : null,
+        operador: form.operador.trim(),
+        motivoFalla: form.motivoFalla.trim(),
+        fechaFalla: form.fechaFalla,
+        accionTomada: form.accionTomada.trim(),
+        revisorNombre: form.revisorNombre.trim(),
+        observacionAdicional: form.observacionAdicional?.trim() || null,
+      };
+
+      await createRevision.mutateAsync({
+        companyId: companyIdFinal,
+        data: payload,
+      });
+
+      try {
+        if (alertIdStr) sessionStorage.removeItem(`alerty:selected_alert_${alertIdStr}`);
+      } catch {
+        // ignore
+      }
+
+      router.back();
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "No se pudo guardar la revisión.";
+      setLocalError(message);
     } finally {
       setSaving(false);
     }
   }
 
-  const headerId = alertId ? `#${alertId}` : "—";
+  const showLoadingBox = isLoadingDetail && !alert;
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
@@ -218,7 +380,11 @@ export default function RevisionAlertPage() {
             Marcar como revisado {headerId}
           </h1>
           <p className="max-w-2xl text-xs text-slate-400 sm:text-sm">
-            Completa el formulario. Vehículo/Planta/Operador son editables.
+            Vehículo/Planta/Operador se precargan desde la alerta (si existe) y son
+            editables.
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Empresa usada: <span className="text-slate-300">{companyIdFinal}</span>
           </p>
         </div>
 
@@ -237,21 +403,21 @@ export default function RevisionAlertPage() {
             type="button"
             className="h-9 rounded-xl px-3 text-xs"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || createRevision.isPending}
           >
             <Save className="h-4 w-4" />
-            {saving ? "Guardando…" : "Guardar"}
+            {saving || createRevision.isPending ? "Guardando…" : "Guardar"}
           </Button>
         </div>
       </div>
 
       {/* Estado carga alerta */}
-      {(isLoading || isError || (!isLoading && !isError && !alert)) && (
+      {(showLoadingBox || isError || (!alert && !showLoadingBox && !isError)) && (
         <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm">
-          {isLoading && (
+          {showLoadingBox && (
             <div className="flex items-center gap-3 text-sm text-slate-300">
               <div className="h-4 w-4 animate-spin rounded-full border border-slate-500 border-t-transparent" />
-              Cargando alerta…
+              Cargando alerta por ID…
             </div>
           )}
 
@@ -261,11 +427,10 @@ export default function RevisionAlertPage() {
             </div>
           )}
 
-          {!isLoading && !isError && !alert && (
+          {!alert && !showLoadingBox && !isError && (
             <div className="text-sm text-slate-300">
-              No encontré la alerta {headerId} en los datos cargados. Sube el{" "}
-              <span className="font-semibold text-slate-200">size</span> o crea un
-              endpoint por ID.
+              No encontré datos de la alerta {headerId}. (Igual puedes llenar
+              manualmente.)
             </div>
           )}
         </section>
@@ -273,21 +438,13 @@ export default function RevisionAlertPage() {
 
       {/* Formulario */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
-        {/* Mensajes */}
         {localError && (
           <div className="mb-3 rounded-2xl border border-rose-800/60 bg-rose-600/10 px-3 py-2 text-xs text-rose-200">
             {localError}
           </div>
         )}
-        {savedOk && (
-          <div className="mb-3 flex items-center gap-2 rounded-2xl border border-emerald-800/60 bg-emerald-600/10 px-3 py-2 text-xs text-emerald-200">
-            <CheckCircle2 className="h-4 w-4" />
-            Revisión guardada (simulado). Conecta tu endpoint para persistir.
-          </div>
-        )}
 
         <div className="grid gap-3 md:grid-cols-3">
-          {/* Vehículo */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">Vehículo</label>
             <input
@@ -298,18 +455,19 @@ export default function RevisionAlertPage() {
             />
           </div>
 
-          {/* Planta */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">Planta</label>
             <input
               value={form.planta}
               onChange={(e) => setField("planta", e.target.value)}
               className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
-              placeholder="Ej: Planta Norte"
+              placeholder="(por ahora se precarga con Área)"
             />
+            <p className="text-[11px] text-slate-500">
+              *Temporal: se llena con el Área de la alerta.
+            </p>
           </div>
 
-          {/* Operador */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">Operador</label>
             <input
@@ -322,19 +480,16 @@ export default function RevisionAlertPage() {
         </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {/* Motivo */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">Motivo de falla</label>
-            <textarea
+            <input
               value={form.motivoFalla}
               onChange={(e) => setField("motivoFalla", e.target.value)}
-              rows={3}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
-              placeholder="Describe la falla…"
+              className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
+              placeholder="Ej: IMPACTO / CHECKLIST"
             />
           </div>
 
-          {/* Fecha falla */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">
               Fecha de la falla
@@ -349,7 +504,6 @@ export default function RevisionAlertPage() {
         </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {/* Acción tomada */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">Acción tomada</label>
             <textarea
@@ -361,7 +515,6 @@ export default function RevisionAlertPage() {
             />
           </div>
 
-          {/* Revisor */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">
               Nombre del que revisa
@@ -375,7 +528,6 @@ export default function RevisionAlertPage() {
           </div>
         </div>
 
-        {/* Observación adicional */}
         <div className="mt-3 space-y-1">
           <label className="text-xs font-medium text-slate-400">
             Observación adicional (opcional)
@@ -395,7 +547,7 @@ export default function RevisionAlertPage() {
             <div>
               <p className="text-xs font-semibold text-slate-100">Fotos</p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Adjunta evidencias (puedes subir varias).
+                (Aún no se envían al backend; luego lo conectamos con FormData)
               </p>
             </div>
 
@@ -428,10 +580,12 @@ export default function RevisionAlertPage() {
                   <button
                     type="button"
                     className="rounded-full p-1 hover:bg-slate-900"
-                    onClick={() => {
-                      const next = form.fotos.filter((_, idx) => idx !== i);
-                      setField("fotos", next);
-                    }}
+                    onClick={() =>
+                      setField(
+                        "fotos",
+                        form.fotos.filter((_, idx) => idx !== i)
+                      )
+                    }
                     aria-label="Quitar foto"
                     title="Quitar foto"
                   >
@@ -445,7 +599,6 @@ export default function RevisionAlertPage() {
           )}
         </div>
 
-        {/* Footer acciones */}
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           <Button
             type="button"
@@ -459,18 +612,19 @@ export default function RevisionAlertPage() {
             type="button"
             className="h-10 rounded-xl px-4 text-sm"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || createRevision.isPending}
           >
             <Save className="h-4 w-4" />
-            {saving ? "Guardando…" : "Guardar revisión"}
+            {saving || createRevision.isPending ? "Guardando…" : "Guardar revisión"}
           </Button>
         </div>
       </section>
 
-      <p className="text-[11px] text-slate-500">
-        Tip: para “guardar de verdad”, crea un endpoint (API route o backend) que reciba{" "}
-        <span className="font-semibold text-slate-300">FormData</span> con campos + fotos.
-      </p>
+      {isLoadingDetail && (
+        <p className="text-[11px] text-slate-500">
+          Tip: ya te estoy trayendo la alerta por ID para que siempre precargue bien.
+        </p>
+      )}
     </div>
   );
 }

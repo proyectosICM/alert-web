@@ -17,7 +17,6 @@ import type {
 } from "@/api/services/alertRevisionService";
 import type { PageResponse } from "@/api/services/notificationGroupService";
 
-// (Opcional) mismas opciones “vivas” que alerts, si quieres auto-refresh
 const LIVE_LIST_QUERY_OPTIONS = {
   staleTime: 0,
   gcTime: 5 * 60 * 1000,
@@ -26,7 +25,6 @@ const LIVE_LIST_QUERY_OPTIONS = {
 } as const;
 
 // ========== READ ONE (by revisionId) ==========
-
 export const useAlertRevision = (companyId?: number, id?: number) => {
   return useQuery<AlertRevisionDetail, Error>({
     queryKey: ["alertRevision", companyId, id],
@@ -37,7 +35,6 @@ export const useAlertRevision = (companyId?: number, id?: number) => {
 };
 
 // ========== READ ONE (by alertId) ==========
-
 export const useAlertRevisionByAlertId = (companyId?: number, alertId?: number) => {
   return useQuery<AlertRevisionDetail, Error>({
     queryKey: ["alertRevision", "byAlert", companyId, alertId],
@@ -48,7 +45,6 @@ export const useAlertRevisionByAlertId = (companyId?: number, alertId?: number) 
 };
 
 // ========== EXISTS ==========
-
 export const useAlertRevisionExists = (companyId?: number, alertId?: number) => {
   return useQuery<ExistsResponse, Error>({
     queryKey: ["alertRevision", "exists", companyId, alertId],
@@ -64,13 +60,12 @@ export const useAlertRevisionExists = (companyId?: number, alertId?: number) => 
 };
 
 // ========== LIST ALL ==========
-
 export const useAlertRevisions = (params: {
   companyId?: number;
   page?: number;
   size?: number;
   sort?: string;
-  live?: boolean; // opcional
+  live?: boolean;
 }) => {
   const { companyId, live } = params;
 
@@ -90,14 +85,13 @@ export const useAlertRevisions = (params: {
 };
 
 // ========== LIST BY ALERT ==========
-
 export const useAlertRevisionsByAlert = (params: {
   companyId?: number;
   alertId?: number;
   page?: number;
   size?: number;
   sort?: string;
-  live?: boolean; // opcional
+  live?: boolean;
 }) => {
   const { companyId, alertId, live } = params;
 
@@ -118,7 +112,6 @@ export const useAlertRevisionsByAlert = (params: {
 };
 
 // ========== CREATE ==========
-
 export const useCreateAlertRevision = () => {
   const qc = useQueryClient();
 
@@ -131,14 +124,13 @@ export const useCreateAlertRevision = () => {
     onSuccess: (_created, vars) => {
       qc.invalidateQueries({ queryKey: ["alertRevisions"] });
       qc.invalidateQueries({ queryKey: ["alertRevision"] });
-      // útil si tienes vistas por alertId:
-      // qc.invalidateQueries({ queryKey: ["alertRevision", "byAlert", vars.companyId] });
+      qc.invalidateQueries({ queryKey: ["alertRevision", "byAlert", vars.companyId] });
+      qc.invalidateQueries({ queryKey: ["alertRevision", "exists", vars.companyId] });
     },
   });
 };
 
 // ========== UPDATE ==========
-
 export const useUpdateAlertRevision = () => {
   const qc = useQueryClient();
 
@@ -157,7 +149,6 @@ export const useUpdateAlertRevision = () => {
 };
 
 // ========== DELETE ==========
-
 export const useDeleteAlertRevision = () => {
   const qc = useQueryClient();
 
