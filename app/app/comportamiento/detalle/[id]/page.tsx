@@ -283,6 +283,10 @@ export default function ComportamientoAlertDetailPage() {
   const fotosUnknown = pickUnknown(r, ["fotos"]);
   const fotosCount = Array.isArray(fotosUnknown) ? (fotosUnknown as unknown[]).length : 0;
 
+  const createdAt = pickUnknown(r, ["createdAt"]); // unknown
+  const hasCreatedAt =
+    createdAt !== undefined && createdAt !== null && String(createdAt).trim() !== "";
+
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
       {/* Header con botón de volver + acciones */}
@@ -553,9 +557,9 @@ export default function ComportamientoAlertDetailPage() {
                     <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-950/50 px-2 py-0.5 text-[11px] font-medium text-slate-300">
                       AlertId: {String(pickUnknown(r, ["alertId"]) ?? id)}
                     </span>
-                    {pickUnknown(r, ["createdAt"]) && (
+                    {hasCreatedAt && (
                       <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-950/50 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                        Creada: {fmtDateTimeMaybe(pickUnknown(r, ["createdAt"]))}
+                        Creada: {fmtDateTimeMaybe(createdAt)}
                       </span>
                     )}
                   </div>
