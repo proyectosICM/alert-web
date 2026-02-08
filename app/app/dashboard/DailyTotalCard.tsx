@@ -115,9 +115,6 @@ export default function DailyTotalCard({
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-100">Total en el sistema</p>
-            <p className="mt-1 text-[12px] text-slate-500">
-              Total de alertas por fecha seleccionada (eventTime).
-            </p>
           </div>
 
           <span className="shrink-0 rounded-full border border-slate-800 bg-slate-950/60 px-3 py-1 text-[11px] font-semibold text-slate-200">
@@ -132,9 +129,6 @@ export default function DailyTotalCard({
               <div className="min-w-0">
                 <p className="text-[12px] font-semibold text-slate-100">
                   Selector de flota
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Elige “Todas” o una flota para filtrar el total.
                 </p>
               </div>
 
@@ -223,12 +217,6 @@ export default function DailyTotalCard({
                 </div>
               </PopoverContent>
             </Popover>
-
-            <p className="text-[11px] text-slate-500">
-              Selección actual:{" "}
-              <span className="font-semibold text-slate-200">{selectedFleetLabel}</span>
-              {fleetId ? <span className="text-slate-500"> (id: {fleetId})</span> : null}
-            </p>
           </div>
         </div>
 

@@ -6,7 +6,6 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { AlertSummary } from "@/api/services/alertService";
 import type { MonthlyTrendPoint } from "./MonthlyTrendChart";
 
-// ✅ Ahora por tipo de alerta
 type AlertTypeCol = "IMPACTO" | "FRENADA" | "ACELERACION";
 
 type Derived = {
@@ -18,7 +17,6 @@ type Derived = {
 type Props = {
   alerts?: AlertSummary[] | null;
 
-  // ✅ controlado desde el padre (page.tsx)
   anchorMonth: Date;
   onAnchorChange: (next: Date) => void;
 
@@ -32,8 +30,6 @@ type Props = {
 const LIMA_TZ = "America/Lima";
 
 // ===== helpers fechas =====
-
-// ✅ FIX: obtiene "YYYY-MM" calculado EN LIMA (no depende del offset del string)
 function monthKeyFromEventTimeInZone(eventTime?: string | null, timeZone = LIMA_TZ) {
   if (!eventTime || typeof eventTime !== "string") return null;
 
@@ -88,14 +84,12 @@ function quarterLabelForAnchor(anchor: Date) {
   return `Q${q} ${y}`;
 }
 
-// ✅ Aux para leer el tipo real desde AlertSummary sin depender del nombre exacto
 type AlertLike = AlertSummary & {
   alertType?: string | null;
   type?: string | null;
   alert_type?: string | null;
 };
 
-// ✅ Normaliza strings tipo "EXCESO_VELOCIDAD", "FRENADA BRUSCA", etc.
 function normalizeType(raw?: string | null) {
   return (raw ?? "")
     .toString()
@@ -109,7 +103,6 @@ function normalizeType(raw?: string | null) {
     .replace(/Ú/g, "U");
 }
 
-// ✅ Mapea el alertType del backend a tus 3 buckets
 function mapToTypeCol(rawType?: string | null): AlertTypeCol {
   const t = normalizeType(rawType);
 
@@ -117,7 +110,6 @@ function mapToTypeCol(rawType?: string | null): AlertTypeCol {
   if (t.includes("FRENAD")) return "FRENADA";
   if (t.includes("ACELER")) return "ACELERACION";
 
-  // Si cae algo distinto, lo mandamos a IMPACTO para que no “desaparezca”
   return "IMPACTO";
 }
 
@@ -134,13 +126,11 @@ export default function MonthlySummaryTable({
   isError,
   onDerivedChange,
 }: Props) {
-  // ✅ blindaje: siempre array
   const alerts = useMemo<AlertSummary[]>(
     () => (Array.isArray(alertsProp) ? alertsProp : []),
     [alertsProp]
   );
 
-  // ✅ DEBUG: min/max eventTime para saber qué está llegando realmente
   const debugMinMax = useMemo(() => {
     if (alerts.length === 0) return null;
 
@@ -150,12 +140,10 @@ export default function MonthlySummaryTable({
 
     if (times.length === 0) return null;
 
-    // ojo: solo para debug rápido (strings ISO suelen ordenar bien)
     const sorted = [...times].sort();
     return { min: sorted[0], max: sorted[sorted.length - 1] };
   }, [alerts]);
 
-  // ✅ Conteo por mes (map) por IMPACTO/FRENADA/ACELERACION
   const monthlyCounts = useMemo(() => {
     const map = new Map<
       string,
@@ -163,7 +151,6 @@ export default function MonthlySummaryTable({
     >();
 
     for (const a of alerts) {
-      // ✅ FIX: monthKey calculado en LIMA
       const key = monthKeyFromEventTimeInZone(a?.eventTime, LIMA_TZ);
       if (!key) continue;
 
@@ -222,24 +209,6 @@ export default function MonthlySummaryTable({
     <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4 lg:col-span-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <span className="text-xs font-medium text-slate-400">Resumen mensual</span>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Mes (vertical) × Tipo de alerta (horizontal)
-          </p>
-
-          {/* ✅ Debug visible */}
-          <p className="mt-1 text-[11px] text-slate-500">
-            Alertas cargadas:{" "}
-            <span className="font-semibold text-slate-200">{debugTotalLoaded}</span>
-          </p>
-
-          {debugMinMax && (
-            <p className="mt-1 text-[11px] text-slate-500">
-              eventTime min/max: <span className="text-slate-300">{debugMinMax.min}</span>{" "}
-              → <span className="text-slate-300">{debugMinMax.max}</span>
-            </p>
-          )}
-
           <p className="mt-1 text-[11px] text-slate-500">
             Meses detectados (Lima):{" "}
             <span className="text-slate-300">{debugMonthsDetected || "—"}</span>
@@ -308,10 +277,6 @@ export default function MonthlySummaryTable({
       </div>
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-[11px] text-slate-500">
-          Navegación: retrocede/avanza 3 meses (la tabla sigue siendo mensual).
-        </p>
-
         <div className="flex items-center gap-2">
           <button
             type="button"
