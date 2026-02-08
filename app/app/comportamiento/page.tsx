@@ -85,12 +85,13 @@ function isAlertReviewed(a: AlertSummary): boolean {
 }
 
 // ---- Helpers para “leer” campos (tolerante a backend) ----
+// ✅ CAMBIO: priorizar vehicleCode en lugar de licensePlate
 function getVehicleLabel(a: AlertSummary) {
   const x = a as AlertLike;
-  const lp = stripHtml(x.licensePlate ?? a.licensePlate ?? "");
   const vc = stripHtml(x.vehicleCode ?? a.vehicleCode ?? "");
+  const lp = stripHtml(x.licensePlate ?? a.licensePlate ?? "");
   const id = getAlertId(a);
-  return lp || vc || (id !== undefined ? `#${id}` : "Vehículo");
+  return vc || lp || (id !== undefined ? `#${id}` : "Vehículo");
 }
 
 function getPlantLabel(a: AlertSummary) {
@@ -799,8 +800,9 @@ export default function ComportamientoPage() {
         {!isLoading &&
           !isError &&
           filteredAlerts.map((alert, idx) => {
-            const licensePlate = stripHtml(alert.licensePlate);
+            // ✅ CAMBIO: vehicleCode primero
             const vehicleCode = stripHtml(alert.vehicleCode);
+            const licensePlate = stripHtml(alert.licensePlate);
             const shortDescription = stripHtml(alert.shortDescription);
 
             const sev = mapSeverityToBucket(alert.severity);
@@ -818,15 +820,21 @@ export default function ComportamientoPage() {
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-slate-100">
-                        {licensePlate || vehicleCode || (id ? `#${id}` : `#${idx}`)}
+                        {vehicleCode || licensePlate || (id ? `#${id}` : `#${idx}`)}
                       </p>
 
                       <p className="mt-0.5 text-[11px] text-slate-500">
                         {mode === "EQUIPO"
-                          ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
+                          ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(
+                              alert
+                            )}`
                           : mode === "INFRAESTRUCTURA"
-                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
-                            : `Vehículo: ${getVehicleLabel(alert)} • Área: ${getAreaLabel(alert)}`}
+                            ? `Vehículo: ${getVehicleLabel(
+                                alert
+                              )} • Operador: ${getOperatorGroupLabel(alert)}`
+                            : `Vehículo: ${getVehicleLabel(
+                                alert
+                              )} • Área: ${getAreaLabel(alert)}`}
                       </p>
                     </div>
 
