@@ -12,7 +12,7 @@ export type AlertRevisionPhotoSummary = {
   id: number;
   revisionId: number;
 
-  filename?: string | null;
+  fileName?: string | null;
   contentType?: string | null;
 
   // ejemplo: orden, comentario, etc.
@@ -31,7 +31,7 @@ export type CreateAlertRevisionPhotoRequest = {
   // si tu DTO incluye revisionId, lo puedes mandar o no; el backend lo fuerza/valida
   revisionId?: number;
 
-  filename?: string | null;
+  fileName?: string | null;
   contentType?: string | null;
   caption?: string | null;
 
@@ -39,7 +39,7 @@ export type CreateAlertRevisionPhotoRequest = {
 };
 
 export type UpdateAlertRevisionPhotoRequest = {
-  filename?: string | null;
+  fileName?: string | null;
   contentType?: string | null;
   caption?: string | null;
 

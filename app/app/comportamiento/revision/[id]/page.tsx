@@ -13,6 +13,10 @@ import type { AlertSummary } from "@/api/services/alertService";
 import { useAlert } from "@/api/hooks/useAlerts";
 import { useCreateAlertRevision } from "@/api/hooks/useAlertRevisions";
 
+// ✅ NUEVO: hooks fotos
+import { useCreateRevisionPhoto } from "@/api/hooks/useAlertRevisionPhoto";
+import type { CreateAlertRevisionPhotoRequest } from "@/api/services/alertRevisionPhotoService";
+
 /**
  * ✅ Tipos auxiliares para evitar `any`
  */
@@ -45,7 +49,7 @@ type AlertExtras = {
   revisionCompleted?: boolean | null;
   hasRevision?: boolean | null;
   revision?: boolean | null;
-  alertRevision?: unknown | null; // si tu backend manda el objeto revisión
+  alertRevision?: unknown | null;
 
   // extras comunes del detalle
   eventTime?: string | null;
@@ -81,9 +85,7 @@ function isAlertReviewed(a: AlertSummary | null): boolean {
     x.revision;
 
   if (typeof flag === "boolean") return flag;
-
   if (x.alertRevision != null) return true;
-
   return false;
 }
 
@@ -141,7 +143,7 @@ type RevisionForm = {
   fotos: File[];
 };
 
-// ✅ PATCH: tipo mínimo para el payload (evita `as any`)
+// ✅ payload tipado (sin any)
 type CreateRevisionPayload = {
   companyId: number;
   alertId: number;
@@ -155,6 +157,32 @@ type CreateRevisionPayload = {
   revisorNombre: string;
   observacionAdicional: string | null;
 };
+
+// ✅ NUEVO: extraer revisionId del response (sin any)
+type CreatedRevisionLike = {
+  id?: number | string;
+  revisionId?: number | string;
+};
+function extractRevisionId(result: unknown): number | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const r = result as CreatedRevisionLike;
+  return toNumberOrUndefined(r.id) ?? toNumberOrUndefined(r.revisionId);
+}
+
+// ✅ NUEVO: File -> base64 (sin header)
+async function fileToBase64(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo."));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  });
+
+  // "data:image/png;base64,AAAA..." -> solo AAAA...
+  const commaIdx = dataUrl.indexOf(",");
+  if (commaIdx >= 0) return dataUrl.slice(commaIdx + 1);
+  return dataUrl; // fallback
+}
 
 export default function RevisionAlertPage() {
   const router = useRouter();
@@ -218,11 +246,12 @@ export default function RevisionAlertPage() {
   });
 
   const [saving, setSaving] = useState(false);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false); // ✅ NUEVO
   const [localError, setLocalError] = useState<string>("");
 
   const createRevision = useCreateAlertRevision();
+  const createPhoto = useCreateRevisionPhoto(); // ✅ NUEVO
 
-  // ✅ PATCH: evitar `(alert as any).eventTime`
   useEffect(() => {
     if (!alert) return;
 
@@ -321,6 +350,37 @@ export default function RevisionAlertPage() {
     return "";
   }
 
+  async function uploadPhotos(revisionId: number) {
+    if (!form.fotos.length) return;
+
+    setUploadingPhotos(true);
+
+    try {
+      // Subimos en paralelo (si quieres limitar concurrencia, te lo adapto)
+      await Promise.all(
+        form.fotos.map(async (file) => {
+          const base64 = await fileToBase64(file);
+
+          const payload: CreateAlertRevisionPhotoRequest = {
+            revisionId, // opcional, el backend lo fuerza
+            filename: file.name,
+            contentType: file.type || null,
+            caption: null,
+            dataBase64: base64,
+          };
+
+          await createPhoto.mutateAsync({
+            companyId: companyIdFinal,
+            revisionId,
+            data: payload,
+          });
+        })
+      );
+    } finally {
+      setUploadingPhotos(false);
+    }
+  }
+
   async function handleSave() {
     const msg = validate();
     if (msg) {
@@ -332,7 +392,6 @@ export default function RevisionAlertPage() {
     setLocalError("");
 
     try {
-      // ✅ PATCH: sin `as any` (payload tipado)
       const payload: CreateRevisionPayload = {
         companyId: companyIdFinal,
         alertId,
@@ -348,11 +407,24 @@ export default function RevisionAlertPage() {
         observacionAdicional: form.observacionAdicional?.trim() || null,
       };
 
-      await createRevision.mutateAsync({
+      // 1) Crear revisión
+      const created = await createRevision.mutateAsync({
         companyId: companyIdFinal,
         data: payload,
       });
 
+      // 2) Subir fotos
+      const revisionId = extractRevisionId(created);
+      if (form.fotos.length > 0) {
+        if (!revisionId) {
+          throw new Error(
+            "Se creó la revisión, pero no pude obtener revisionId para subir fotos. Revisa el DTO de respuesta."
+          );
+        }
+        await uploadPhotos(revisionId);
+      }
+
+      // limpiar cache local
       try {
         if (alertIdStr) sessionStorage.removeItem(`alerty:selected_alert_${alertIdStr}`);
       } catch {
@@ -403,10 +475,19 @@ export default function RevisionAlertPage() {
             type="button"
             className="h-9 rounded-xl px-3 text-xs"
             onClick={handleSave}
-            disabled={saving || createRevision.isPending}
+            disabled={
+              saving ||
+              uploadingPhotos ||
+              createRevision.isPending ||
+              createPhoto.isPending
+            }
           >
             <Save className="h-4 w-4" />
-            {saving || createRevision.isPending ? "Guardando…" : "Guardar"}
+            {saving || createRevision.isPending
+              ? "Guardando…"
+              : uploadingPhotos || createPhoto.isPending
+                ? "Subiendo fotos…"
+                : "Guardar"}
           </Button>
         </div>
       </div>
@@ -547,7 +628,7 @@ export default function RevisionAlertPage() {
             <div>
               <p className="text-xs font-semibold text-slate-100">Fotos</p>
               <p className="mt-1 text-[11px] text-slate-500">
-                (Aún no se envían al backend; luego lo conectamos con FormData)
+                Se suben al guardar (base64).
               </p>
             </div>
 
@@ -597,6 +678,10 @@ export default function RevisionAlertPage() {
           ) : (
             <p className="mt-3 text-[11px] text-slate-500">No hay fotos adjuntas.</p>
           )}
+
+          {(uploadingPhotos || createPhoto.isPending) && (
+            <p className="mt-2 text-[11px] text-slate-500">Subiendo fotos…</p>
+          )}
         </div>
 
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
@@ -612,10 +697,19 @@ export default function RevisionAlertPage() {
             type="button"
             className="h-10 rounded-xl px-4 text-sm"
             onClick={handleSave}
-            disabled={saving || createRevision.isPending}
+            disabled={
+              saving ||
+              uploadingPhotos ||
+              createRevision.isPending ||
+              createPhoto.isPending
+            }
           >
             <Save className="h-4 w-4" />
-            {saving || createRevision.isPending ? "Guardando…" : "Guardar revisión"}
+            {saving || createRevision.isPending
+              ? "Guardando…"
+              : uploadingPhotos || createPhoto.isPending
+                ? "Subiendo fotos…"
+                : "Guardar revisión"}
           </Button>
         </div>
       </section>
