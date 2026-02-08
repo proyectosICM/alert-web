@@ -262,3 +262,43 @@ export const useAlertsSearch = (params: {
     ...LIVE_LIST_QUERY_OPTIONS,
   });
 };
+
+export const useAlertsMonthlyStats = (params: {
+  companyId?: number;
+  year?: number;
+  zone?: string;
+  types?: string[];
+  fleetId?: number;
+  groupId?: number;
+  ack?: boolean;
+}) => {
+  const { companyId, year, zone, types, fleetId, groupId, ack } = params;
+
+  return useQuery<alertService.MonthlyCountPoint[], Error>({
+    queryKey: [
+      "alerts",
+      "stats",
+      "monthly",
+      companyId,
+      year,
+      zone,
+      types,
+      fleetId,
+      groupId,
+      ack,
+    ],
+    enabled: !!companyId && !!year,
+    queryFn: () =>
+      alertService.getAlertsMonthlyStats({
+        companyId: companyId as number,
+        year: year as number,
+        zone: zone ?? "America/Lima",
+        types,
+        fleetId,
+        groupId,
+        ack,
+      }),
+    staleTime: 30_000,
+    gcTime: 5 * 60 * 1000,
+  });
+};

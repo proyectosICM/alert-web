@@ -12,6 +12,8 @@ import {
   Activity,
   Clock,
   CalendarDays,
+  Layers,
+  Truck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,11 +27,12 @@ const navItems: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/comportamiento", label: "Comportamiento", icon: Activity },
   { href: "/app/turnos", label: "Turnos", icon: CalendarDays },
-  { href: "/app/groups", label: "Grupos y Flotas", icon: Users },
+  { href: "/app/flotas", label: "Flotas", icon: Truck },
   { href: "/app/users", label: "Usuarios", icon: UserCog },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 
+//  { href: "/app/groups", label: "Grupos", icon: Users },
 //  { href: "/app/alerts", label: "Alertas", icon: Bell },
 
 export function Sidebar() {

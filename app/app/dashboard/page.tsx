@@ -1,11 +1,10 @@
-// app/(app)/page.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
 
-import { useAlertsByUser, useAlertsSearch } from "@/api/hooks/useAlerts";
+import { useAlertsByUser, useAlertsMonthlyStats } from "@/api/hooks/useAlerts";
 import type { AlertSummary } from "@/api/services/alertService";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { stripHtml } from "@/lib/utils";
@@ -15,13 +14,6 @@ import DailyTotalCard from "./DailyTotalCard";
 import MonthlySummaryTable from "./MonthlySummaryTable";
 
 import { Button } from "@/components/ui/button";
-
-// ====== Types ======
-type MonthlyDerivedPayload = {
-  monthlyChartData: MonthlyTrendPoint[];
-  tableHeaderLabel: string;
-  quarterLabel: string;
-};
 
 // ====== Buckets de severidad (igual que en alerts) ======
 type SeverityBucket = "LOW" | "MEDIUM" | "HIGH";
@@ -38,23 +30,24 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
   return "LOW";
 }
 
-// ====== Helpers fechas (Lima) ======
-function addMonths(base: Date, delta: number) {
-  return new Date(base.getFullYear(), base.getMonth() + delta, 1);
-}
-
-// inicio del mes en ISO con zona Lima (fijo -05:00)
-function toISOStartOfMonthLima(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}-01T00:00:00-05:00`;
-}
-
-// ✅ Aux: tolerante a ids alternos + reviewed (para lucir como Comportamiento)
+// ====== Alert helpers ======
 type AlertLike = AlertSummary & {
   alertId?: string | number;
   reviewed?: boolean;
 };
+
+// ✅ Extras tolerantes (como en /comportamiento)
+type AlertExtras = {
+  areaName?: string | null;
+  area?: string | null;
+  areaCode?: string | null;
+  zoneName?: string | null;
+  zona?: string | null;
+  regionName?: string | null;
+  region?: string | null;
+};
+
+type AlertLikeFull = AlertSummary & Partial<AlertLike> & Partial<AlertExtras>;
 
 function getAlertId(a: AlertSummary): string | number | undefined {
   const x = a as AlertLike;
@@ -66,6 +59,20 @@ function isAlertReviewed(a: AlertSummary): boolean {
   return !!x.reviewed;
 }
 
+// ✅ área (INFRAESTRUCTURA) tolerante a backend
+function getAreaLabel(a: AlertSummary) {
+  const x = a as AlertLikeFull;
+  const area =
+    stripHtml(x.areaName ?? "") ||
+    stripHtml(x.area ?? "") ||
+    stripHtml(x.areaCode ?? "") ||
+    stripHtml(x.zoneName ?? "") ||
+    stripHtml(x.zona ?? "") ||
+    stripHtml(x.regionName ?? "") ||
+    stripHtml(x.region ?? "");
+  return area || "-";
+}
+
 export default function AppHome() {
   const router = useRouter();
 
@@ -74,54 +81,109 @@ export default function AppHome() {
   const companyId = auth?.companyId;
   const userId = auth?.userId;
 
-  // ✅ Fleet filter (GLOBAL): undefined = Todas
   const [fleetId, setFleetId] = useState<number | undefined>(undefined);
 
   // ==========================
-  // ✅ Anchor (TABLA + CHART)
+  // ✅ CHART + TABLA ANUAL (3 llamadas: Impacto/Frenada/Aceleración)
   // ==========================
-  const [anchorMonth, setAnchorMonth] = useState<Date>(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
+  const [statsYear, setStatsYear] = useState<number>(() => new Date().getFullYear());
+  const [statsAck, setStatsAck] = useState<boolean | undefined>(undefined);
 
-  // tabla = [anchorMonth, anchorMonth-1, anchorMonth-2]
-  // from = inicio de (anchorMonth - 2)
-  // to   = inicio de (anchorMonth + 1)  (exclusivo)
-  const rangeStart = useMemo(() => addMonths(anchorMonth, -2), [anchorMonth]);
-  const rangeEnd = useMemo(() => addMonths(anchorMonth, +1), [anchorMonth]);
+  // ✅ Tipos canónicos (ajusta si tu backend usa otros strings)
+  const TYPE_IMPACTO = "IMPACTO";
+  const TYPE_FRENADA = "FRENADA";
+  const TYPE_ACELERACION = "ACELERACION";
 
-  const from = useMemo(() => toISOStartOfMonthLima(rangeStart), [rangeStart]);
-  const to = useMemo(() => toISOStartOfMonthLima(rangeEnd), [rangeEnd]);
-
-  // ==========================
-  // ✅ Alertas para TABLA/CHART (RANGO VISIBLE: 3 meses)
-  // ==========================
-  const quarterAlertsQuery = useAlertsSearch({
+  const impactoQ = useAlertsMonthlyStats({
     companyId,
-    from,
-    to,
-    page: 0,
-    size: 5000,
-    sort: "eventTime,asc",
-    fleetId, // ✅ filtro global
+    year: statsYear,
+    zone: "America/Lima",
+    types: [TYPE_IMPACTO],
+    fleetId,
+    ack: statsAck,
   });
 
-  const alertsForTable: AlertSummary[] = useMemo(() => {
-    const raw = quarterAlertsQuery.data?.content;
-    return Array.isArray(raw) ? raw : [];
-  }, [quarterAlertsQuery.data]);
+  const frenadaQ = useAlertsMonthlyStats({
+    companyId,
+    year: statsYear,
+    zone: "America/Lima",
+    types: [TYPE_FRENADA],
+    fleetId,
+    ack: statsAck,
+  });
+
+  const aceleracionQ = useAlertsMonthlyStats({
+    companyId,
+    year: statsYear,
+    zone: "America/Lima",
+    types: [TYPE_ACELERACION],
+    fleetId,
+    ack: statsAck,
+  });
+
+  const yearlyLoading =
+    impactoQ.isLoading || frenadaQ.isLoading || aceleracionQ.isLoading;
+
+  const yearlyError = impactoQ.isError || frenadaQ.isError || aceleracionQ.isError;
+
+  // Helper: crea los 12 meses y asegura 0 siempre
+  const buildYearBase = (year: number) => {
+    const base = new Map<string, MonthlyTrendPoint>();
+    for (let m = 1; m <= 12; m++) {
+      const mm = String(m).padStart(2, "0");
+      const month = `${year}-${mm}`;
+      base.set(month, { month, impacto: 0, frenada: 0, aceleracion: 0 });
+    }
+    return base;
+  };
+
+  const yearlyChartData: MonthlyTrendPoint[] = useMemo(() => {
+    const base = buildYearBase(statsYear);
+
+    (impactoQ.data ?? []).forEach((r) => {
+      const p = base.get(r.month) ?? {
+        month: r.month,
+        impacto: 0,
+        frenada: 0,
+        aceleracion: 0,
+      };
+      p.impacto = r.total;
+      base.set(r.month, p);
+    });
+
+    (frenadaQ.data ?? []).forEach((r) => {
+      const p = base.get(r.month) ?? {
+        month: r.month,
+        impacto: 0,
+        frenada: 0,
+        aceleracion: 0,
+      };
+      p.frenada = r.total;
+      base.set(r.month, p);
+    });
+
+    (aceleracionQ.data ?? []).forEach((r) => {
+      const p = base.get(r.month) ?? {
+        month: r.month,
+        impacto: 0,
+        frenada: 0,
+        aceleracion: 0,
+      };
+      p.aceleracion = r.total;
+      base.set(r.month, p);
+    });
+
+    return Array.from(base.values()).sort((a, b) => a.month.localeCompare(b.month));
+  }, [statsYear, impactoQ.data, frenadaQ.data, aceleracionQ.data]);
 
   // ==========================
-  // ✅ Alertas para “Últimas alertas” (rápido)
+  // Últimas alertas
   // ==========================
   const latestQuery = useAlertsByUser({
     companyId,
     userId,
     page: 0,
     size: 5,
-    // ✅ si tu backend soporta fleetId aquí, descomenta:
-    // fleetId,
   });
 
   const latestAlerts: AlertSummary[] = useMemo(() => {
@@ -129,10 +191,9 @@ export default function AppHome() {
     return Array.isArray(raw) ? raw : [];
   }, [latestQuery.data]);
 
-  const handleGoHistory = () => router.push("/app/alerts");
+  const handleGoHistory = () => router.push("/app/comportamiento");
   const handleGoSettings = () => router.push("/app/settings");
 
-  // ✅ Navegación estilo Comportamiento (ajusta rutas si difieren)
   const handleGoRevision = (alert: AlertSummary) => {
     const id = getAlertId(alert);
     if (id === undefined || id === null) return;
@@ -145,8 +206,6 @@ export default function AppHome() {
     } catch {
       // ignore
     }
-
-    // ✅ aquí puedes apuntar a tu pantalla real de revisión
     router.push(`/app/comportamiento/revision/${id}`);
   };
 
@@ -162,15 +221,8 @@ export default function AppHome() {
     } catch {
       // ignore
     }
-
-    // ✅ aquí puedes apuntar a tu pantalla real de detalle
     router.push(`/app/comportamiento/detalle/${id}`);
   };
-
-  // Derived para el gráfico (lo emite la tabla)
-  const [chartData, setChartData] = useState<MonthlyTrendPoint[]>([]);
-  const [tableHeaderLabel, setTableHeaderLabel] = useState<string>("");
-  const [quarterLabel, setQuarterLabel] = useState<string>("");
 
   if (!companyId || !userId) {
     return (
@@ -189,6 +241,10 @@ export default function AppHome() {
   const severityLabel = (b: SeverityBucket) =>
     b === "HIGH" ? "Crítica" : b === "MEDIUM" ? "Media" : "Baja";
 
+  // ✅ Etiquetas del chart anual (independientes)
+  const yearlyHeaderLabel = `Año ${statsYear}`;
+  const yearlySubLabel = fleetId ? `Flota #${fleetId}` : "Todas las flotas";
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col space-y-4 pb-16 md:pb-4">
       {/* Header */}
@@ -203,9 +259,9 @@ export default function AppHome() {
         </p>
       </div>
 
-      {/* ✅ Responsive grid: 1 col -> 2 col (md) -> 3 col (xl) */}
+      {/* ✅ Grid */}
       <section className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {/* ✅ TOTAL + FECHA + SELECTOR FLEET (DENTRO DEL CARD) */}
+        {/* TOTAL + selector fleet */}
         <div className="min-w-0">
           <DailyTotalCard
             companyId={companyId}
@@ -214,29 +270,35 @@ export default function AppHome() {
           />
         </div>
 
-        {/* TABLA */}
+        {/* ✅ TABLA ANUAL (usa yearlyChartData y muestra de 3 meses desde enero) */}
         <div className="min-w-0 overflow-x-auto md:overflow-visible xl:col-span-2">
           <MonthlySummaryTable
-            alerts={alertsForTable}
-            anchorMonth={anchorMonth}
-            onAnchorChange={setAnchorMonth}
-            isLoading={quarterAlertsQuery.isLoading}
-            isError={quarterAlertsQuery.isError}
-            onDerivedChange={(d: MonthlyDerivedPayload) => {
-              setChartData(d.monthlyChartData);
-              setTableHeaderLabel(d.tableHeaderLabel);
-              setQuarterLabel(d.quarterLabel);
-            }}
+            annualData={yearlyChartData} // ✅ NUEVO: misma data que el gráfico
+            year={statsYear} // ✅ para labels
+            isLoading={yearlyLoading}
+            isError={yearlyError}
           />
         </div>
       </section>
 
-      {/* GRÁFICO */}
+      {/* ✅ GRÁFICO ANUAL (misma data que la tabla) */}
       <MonthlyTrendChart
-        data={chartData}
-        tableHeaderLabel={tableHeaderLabel}
-        quarterLabel={quarterLabel}
+        data={yearlyChartData}
+        tableHeaderLabel={yearlyHeaderLabel}
+        quarterLabel={yearlySubLabel}
       />
+
+      {/* (Opcional) Estado del chart anual */}
+      {yearlyLoading && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400">
+          Cargando estadísticas anuales…
+        </div>
+      )}
+      {yearlyError && (
+        <div className="rounded-2xl border border-rose-900/60 bg-rose-950/30 p-3 text-xs text-rose-200">
+          Error al cargar estadísticas anuales.
+        </div>
+      )}
 
       {/* Acciones rápidas */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
@@ -269,7 +331,7 @@ export default function AppHome() {
         </div>
       </section>
 
-      {/* ✅ Últimas alertas (size=5) - estilo Comportamiento */}
+      {/* ✅ Últimas alertas */}
       <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -328,6 +390,8 @@ export default function AppHome() {
             const licensePlate = stripHtml(alert.licensePlate);
             const shortDescription = stripHtml(alert.shortDescription);
 
+            const area = getAreaLabel(alert);
+
             const sev = mapSeverityToBucket(alert.severity);
             const isPending = !alert.acknowledged;
 
@@ -337,9 +401,7 @@ export default function AppHome() {
             return (
               <div
                 key={String(id ?? idx)}
-                className={`border-t border-slate-800 py-3 ${
-                  idx === 0 ? "first:border-t-0" : ""
-                }`}
+                className={`border-t border-slate-800 py-3 ${idx === 0 ? "first:border-t-0" : ""}`}
               >
                 <div className="flex flex-col gap-2">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -347,11 +409,14 @@ export default function AppHome() {
                       <p className="truncate text-sm font-medium text-slate-100">
                         {vehicleCode || licensePlate || (id ? `#${id}` : `#${idx}`)}
                       </p>
-                      <p className="mt-0.5 text-[11px] text-slate-500">ID: {id ?? "-"}</p>
+
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        Área: {area} <span className="text-slate-700">•</span> ID:{" "}
+                        {id ?? "-"}
+                      </p>
                     </div>
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                      {/* ✅ Detalles */}
                       <Button
                         type="button"
                         variant="outline"
@@ -361,7 +426,6 @@ export default function AppHome() {
                         Detalles
                       </Button>
 
-                      {/* ✅ Marcar como revisado */}
                       {!reviewed ? (
                         <Button
                           type="button"
@@ -377,7 +441,6 @@ export default function AppHome() {
                         </span>
                       )}
 
-                      {/* ✅ Severidad */}
                       <span
                         className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${severityStyles[sev]}`}
                       >

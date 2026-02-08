@@ -16,8 +16,6 @@ import { Button } from "@/components/ui/button";
 
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -214,11 +212,17 @@ export default function ComportamientoPage() {
   const [mode, setMode] = useState<Mode>("EQUIPO");
   const [selectedKey, setSelectedKey] = useState<string>("");
 
-  // ✅ SOLO MES ACTUAL
   const PAGE_SIZE = 200;
 
+  // ✅ Mes actual (lista/top10/selector)
   const monthStart = useMemo(() => startOfMonthLocal(new Date()), []);
   const monthEnd = useMemo(() => startOfNextMonthLocal(new Date()), []);
+
+  // ✅ Rango para el gráfico: últimos 6 meses (incluye el mes actual)
+  const sixMonthsStart = useMemo(() => {
+    const now = new Date();
+    return startOfMonthLocal(addMonths(now, -5));
+  }, []);
 
   const {
     data,
@@ -230,11 +234,11 @@ export default function ComportamientoPage() {
     isFetchingNextPage,
   } = useInfiniteQuery<PageResponse<AlertSummary>, Error>({
     queryKey: [
-      "alerts_by_user_month",
+      "alerts_by_user_6months",
       companyId,
       userId,
       PAGE_SIZE,
-      monthStart.toISOString(),
+      sixMonthsStart.toISOString(),
     ],
     enabled: !!companyId && !!userId,
     initialPageParam: 0,
@@ -250,25 +254,26 @@ export default function ComportamientoPage() {
       const next = lastPage.number + 1;
       if (next >= lastPage.totalPages) return undefined;
 
-      const foundOlderThanMonth = (lastPage.content ?? []).some((a) => {
+      // ✅ cortar cuando ya empezamos a ver cosas más antiguas que el rango (6 meses)
+      const foundOlderThanRange = (lastPage.content ?? []).some((a) => {
         if (!a?.eventTime) return false;
         const dt = new Date(a.eventTime);
-        return !Number.isNaN(dt.getTime()) && dt < monthStart;
+        return !Number.isNaN(dt.getTime()) && dt < sixMonthsStart;
       });
 
-      return foundOlderThanMonth ? undefined : next;
+      return foundOlderThanRange ? undefined : next;
     },
     staleTime: 30_000,
   });
 
-  // auto-cargar páginas hasta completar el mes
+  // auto-cargar páginas hasta completar el rango (6 meses)
   useEffect(() => {
     if (hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // ✅ ALERTAS DEL MES
+  // ✅ ALERTAS DEL MES (para lista/top10/selector)
   const alerts: AlertSummary[] = useMemo(() => {
     const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
     return all.filter((a) => {
@@ -279,7 +284,18 @@ export default function ComportamientoPage() {
     });
   }, [data, monthStart, monthEnd]);
 
-  // Top 10 dinámico según modo
+  // ✅ ALERTAS ÚLTIMOS 6 MESES (solo para gráfico)
+  const alerts6m: AlertSummary[] = useMemo(() => {
+    const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
+    return all.filter((a) => {
+      if (!a?.eventTime) return false;
+      const dt = new Date(a.eventTime);
+      if (Number.isNaN(dt.getTime())) return false;
+      return inRange(dt, sixMonthsStart, monthEnd);
+    });
+  }, [data, sixMonthsStart, monthEnd]);
+
+  // Top 10 dinámico según modo (mes actual)
   const barMeta = useMemo(() => {
     const title =
       mode === "EQUIPO"
@@ -332,7 +348,7 @@ export default function ComportamientoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, options.join("|")]);
 
-  // Filtrado “coincidente”
+  // Filtrado “coincidente” (MES ACTUAL: lista)
   const filteredAlerts = useMemo(() => {
     if (!selectedKey) return [];
     const match = (a: AlertSummary) => {
@@ -342,6 +358,17 @@ export default function ComportamientoPage() {
     };
     return alerts.filter(match);
   }, [alerts, mode, selectedKey]);
+
+  // ✅ Filtrado “coincidente” (6 MESES: gráfico)
+  const filteredAlerts6m = useMemo(() => {
+    if (!selectedKey) return [];
+    const match = (a: AlertSummary) => {
+      if (mode === "EQUIPO") return getVehicleLabel(a) === selectedKey;
+      if (mode === "INFRAESTRUCTURA") return getAreaLabel(a) === selectedKey;
+      return getOperatorGroupLabel(a) === selectedKey;
+    };
+    return alerts6m.filter(match);
+  }, [alerts6m, mode, selectedKey]);
 
   const titleByMode: Record<Mode, string> = {
     EQUIPO: "Equipo (vehículo)",
@@ -374,7 +401,6 @@ export default function ComportamientoPage() {
     router.push(`/app/comportamiento/revision/${id}`);
   };
 
-  // ✅ NUEVO: ir al detalle (similar a tu /alerts/[id], pero dentro de /comportamiento)
   const handleGoDetail = (alert: AlertSummary) => {
     const id = getAlertId(alert);
     if (id === undefined || id === null) return;
@@ -391,14 +417,14 @@ export default function ComportamientoPage() {
     router.push(`/app/comportamiento/detalle/${id}`);
   };
 
-  // Datos para gráfico mensual (últimos 6 meses)
+  // ✅ Datos para gráfico mensual (últimos 6 meses) usando data REAL de 6 meses
   const chartData: ChartPoint[] = useMemo(() => {
     const now = new Date();
     const end = new Date(now.getFullYear(), now.getMonth(), 1);
     const keys = rangeMonthsAsc(end, 6);
 
     const counts = new Map<string, number>();
-    for (const a of filteredAlerts) {
+    for (const a of filteredAlerts6m) {
       if (!a?.eventTime) continue;
       const dt = new Date(a.eventTime);
       if (Number.isNaN(dt.getTime())) continue;
@@ -411,7 +437,7 @@ export default function ComportamientoPage() {
       mes: monthShortLabelFromKey(k),
       total: counts.get(k) ?? 0,
     }));
-  }, [filteredAlerts]);
+  }, [filteredAlerts6m]);
 
   if (!companyId || !userId) {
     return (
@@ -681,7 +707,7 @@ export default function ComportamientoPage() {
           </div>
         </div>
 
-        {/* Line chart */}
+        {/* Bar chart (últimos 6 meses) */}
         <div className="mt-4 min-w-0 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -694,17 +720,17 @@ export default function ComportamientoPage() {
             </div>
 
             <span className="w-fit rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
-              Total: {filteredAlerts.length}
+              Total: {filteredAlerts6m.length}
             </span>
           </div>
 
           <div className="mt-2 h-[200px] w-full sm:h-[180px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
+              <BarChart
                 data={chartData}
                 margin={{ top: 10, right: 12, left: 0, bottom: 0 }}
               >
-                <CartesianGrid strokeDasharray="3 3" />
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                 <XAxis dataKey="mes" tickLine={false} axisLine={false} />
                 <YAxis
                   allowDecimals={false}
@@ -719,21 +745,32 @@ export default function ComportamientoPage() {
                   labelFormatter={(label?: ReactNode) =>
                     `Mes: ${typeof label === "string" ? label : ""}`
                   }
+                  contentStyle={{
+                    background: "rgba(2, 6, 23, 0.95)",
+                    border: "1px solid rgba(30, 41, 59, 1)",
+                    borderRadius: 12,
+                    color: "#e2e8f0",
+                    fontSize: 12,
+                  }}
+                  labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
                 />
-                <Line
-                  type="monotone"
+                <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
+                <Bar
                   dataKey="total"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
+                  name="Alertas"
+                  radius={[10, 10, 0, 0]}
+                  fill="rgba(99, 102, 241, 0.85)"
+                  stroke="rgba(99, 102, 241, 1)"
+                  strokeWidth={1}
+                  isAnimationActive={false}
                 />
-              </LineChart>
+              </BarChart>
             </ResponsiveContainer>
           </div>
 
           <p className="mt-2 text-[11px] text-slate-500">
-            Nota: como aquí se trae solo el mes actual, si quieres un gráfico “mejor” te
-            lo cambio a “por día del mes”.
+            Nota: la lista y el Top 10 siguen siendo del mes actual; el gráfico usa los
+            últimos 6 meses.
           </p>
         </div>
       </section>
@@ -800,7 +837,6 @@ export default function ComportamientoPage() {
         {!isLoading &&
           !isError &&
           filteredAlerts.map((alert, idx) => {
-            // ✅ CAMBIO: vehicleCode primero
             const vehicleCode = stripHtml(alert.vehicleCode);
             const licensePlate = stripHtml(alert.licensePlate);
             const shortDescription = stripHtml(alert.shortDescription);
@@ -825,21 +861,14 @@ export default function ComportamientoPage() {
 
                       <p className="mt-0.5 text-[11px] text-slate-500">
                         {mode === "EQUIPO"
-                          ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(
-                              alert
-                            )}`
+                          ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
                           : mode === "INFRAESTRUCTURA"
-                            ? `Vehículo: ${getVehicleLabel(
-                                alert
-                              )} • Operador: ${getOperatorGroupLabel(alert)}`
-                            : `Vehículo: ${getVehicleLabel(
-                                alert
-                              )} • Área: ${getAreaLabel(alert)}`}
+                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
+                            : `Vehículo: ${getVehicleLabel(alert)} • Área: ${getAreaLabel(alert)}`}
                       </p>
                     </div>
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                      {/* ✅ NUEVO: Detalles */}
                       <Button
                         type="button"
                         variant="outline"
@@ -849,7 +878,6 @@ export default function ComportamientoPage() {
                         Detalles
                       </Button>
 
-                      {/* ✅ Si ya está revisada: no mostrar botón */}
                       {!reviewed ? (
                         <Button
                           type="button"

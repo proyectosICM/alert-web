@@ -122,102 +122,96 @@ export default function DailyTotalCard({
           </span>
         </div>
 
-        {/* ✅ Selector de Flota dentro del card */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-[12px] font-semibold text-slate-100">
-                  Selector de flota
+        <div className="flex flex-col gap-3">
+          {/* Flota */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-slate-100">
+                Seleccione filtro
+              </p>
+            </div>
+          </div>
+
+          <Popover open={openFleet} onOpenChange={setOpenFleet}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-12 w-full items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
+                aria-label="Filtrar por flota"
+                title="Filtrar por flota"
+              >
+                <span className="min-w-0 truncate">{selectedFleetLabel}</span>
+                <ChevronsUpDown className="h-5 w-5 shrink-0 text-slate-400" />
+              </button>
+            </PopoverTrigger>
+
+            <PopoverContent
+              align="start"
+              side="bottom"
+              sideOffset={10}
+              className="w-[min(360px,calc(100vw-2rem))] rounded-2xl border-slate-800 bg-slate-950/95 p-2 shadow-xl"
+            >
+              <Command>
+                <CommandInput placeholder="Buscar flota..." />
+                <CommandList className="max-h-[55vh] overflow-auto">
+                  <CommandEmpty>No se encontraron flotas.</CommandEmpty>
+
+                  <CommandGroup heading="Opciones">
+                    <CommandItem
+                      value="ALL"
+                      onSelect={() => {
+                        onFleetChange?.(undefined);
+                        setOpenFleet(false);
+                      }}
+                    >
+                      <Check
+                        className={cn(
+                          "mr-2 h-4 w-4",
+                          !fleetId ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      Todas
+                    </CommandItem>
+                  </CommandGroup>
+
+                  <CommandGroup heading="Flotas">
+                    {fleets.map((f) => {
+                      const id = Number(f.id);
+                      return (
+                        <CommandItem
+                          key={String(f.id)}
+                          value={`${f.name} ${id}`}
+                          onSelect={() => {
+                            onFleetChange?.(id);
+                            setOpenFleet(false);
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              fleetId === id ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <span className="min-w-0 truncate">{f.name}</span>
+                          <span className="ml-auto shrink-0 text-[11px] text-slate-500">
+                            #{id}
+                          </span>
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+
+              <div className="mt-2 px-1">
+                <p className="text-[11px] text-slate-500">
+                  {fleetsQuery.isLoading
+                    ? "Cargando flotas..."
+                    : `Mostrando ${fleets.length} flotas`}
                 </p>
               </div>
-
-              <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1 text-[11px] font-medium text-slate-200">
-                {fleetId ? "Filtro activo" : "Sin filtro"}
-              </span>
-            </div>
-
-            <Popover open={openFleet} onOpenChange={setOpenFleet}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-12 w-full items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
-                  aria-label="Filtrar por flota"
-                  title="Filtrar por flota"
-                >
-                  <span className="min-w-0 truncate">{selectedFleetLabel}</span>
-                  <ChevronsUpDown className="h-5 w-5 shrink-0 text-slate-400" />
-                </button>
-              </PopoverTrigger>
-
-              <PopoverContent
-                align="start"
-                side="bottom"
-                sideOffset={10}
-                className="w-[min(360px,calc(100vw-2rem))] rounded-2xl border-slate-800 bg-slate-950/95 p-2 shadow-xl"
-              >
-                <Command>
-                  <CommandInput placeholder="Buscar flota..." />
-                  <CommandList className="max-h-[55vh] overflow-auto">
-                    <CommandEmpty>No se encontraron flotas.</CommandEmpty>
-
-                    <CommandGroup heading="Opciones">
-                      <CommandItem
-                        value="ALL"
-                        onSelect={() => {
-                          onFleetChange?.(undefined);
-                          setOpenFleet(false);
-                        }}
-                      >
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4",
-                            !fleetId ? "opacity-100" : "opacity-0"
-                          )}
-                        />
-                        Todas
-                      </CommandItem>
-                    </CommandGroup>
-
-                    <CommandGroup heading="Flotas">
-                      {fleets.map((f) => {
-                        const id = Number(f.id);
-                        return (
-                          <CommandItem
-                            key={String(f.id)}
-                            value={`${f.name} ${id}`}
-                            onSelect={() => {
-                              onFleetChange?.(id);
-                              setOpenFleet(false);
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                fleetId === id ? "opacity-100" : "opacity-0"
-                              )}
-                            />
-                            <span className="min-w-0 truncate">{f.name}</span>
-                            <span className="ml-auto shrink-0 text-[11px] text-slate-500">
-                              #{id}
-                            </span>
-                          </CommandItem>
-                        );
-                      })}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-
-                <div className="mt-2 px-1">
-                  <p className="text-[11px] text-slate-500">
-                    {fleetsQuery.isLoading
-                      ? "Cargando flotas..."
-                      : `Mostrando ${fleets.length} flotas`}
-                  </p>
-                </div>
-              </PopoverContent>
-            </Popover>
-          </div>
+            </PopoverContent>
+          </Popover>
         </div>
 
         {/* Total + Fecha */}

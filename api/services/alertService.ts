@@ -66,6 +66,21 @@ export type AlertSummary = {
   reviewed: boolean;
 };
 
+export type MonthlyCountPoint = {
+  month: string; // "YYYY-MM" ej: "2026-01"
+  total: number;
+};
+
+export type MonthlyStatsParams = {
+  companyId: number;
+  year: number;
+  zone?: string; // default "America/Lima"
+  types?: string[]; // se manda como CSV
+  fleetId?: number;
+  groupId?: number;
+  ack?: boolean;
+};
+
 // ====== Requests (Create / Update) ======
 
 export type CreateAlertRequest = {
@@ -284,6 +299,25 @@ export const searchAlerts = async (params: AlertSearchParams) => {
       ...rest,
       // backend espera CSV en "types"
       ...(types && types.length > 0 ? { types: types.join(",") } : {}),
+    },
+  });
+
+  return response.data;
+};
+
+// GET /api/alerts/stats/monthly?companyId=...&year=...&zone=...&types=...&fleetId=...&groupId=...&ack=...
+export const getAlertsMonthlyStats = async (params: MonthlyStatsParams) => {
+  const { companyId, year, zone, types, fleetId, groupId, ack } = params;
+
+  const response = await api.get<MonthlyCountPoint[]>(`${endpoint}/stats/monthly`, {
+    params: {
+      companyId,
+      year,
+      zone: zone ?? "America/Lima",
+      ...(types && types.length > 0 ? { types: types.join(",") } : {}),
+      ...(fleetId != null ? { fleetId } : {}),
+      ...(groupId != null ? { groupId } : {}),
+      ...(ack != null ? { ack } : {}),
     },
   });
 
