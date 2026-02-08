@@ -363,7 +363,7 @@ export default function RevisionAlertPage() {
 
           const payload: CreateAlertRevisionPhotoRequest = {
             revisionId, // opcional, el backend lo fuerza
-            filename: file.name,
+            fileName: file.name,
             contentType: file.type || null,
             caption: null,
             dataBase64: base64,

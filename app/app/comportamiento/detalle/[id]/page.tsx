@@ -1,7 +1,7 @@
 // app/(app)/comportamiento/detalle/[id]/page.tsx
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -9,13 +9,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  ClipboardList,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 
 import { cn, stripHtml } from "@/lib/utils";
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 
 import { useAlert, useAcknowledgeAlert } from "@/api/hooks/useAlerts";
 import * as revisionService from "@/api/services/alertRevisionService";
@@ -23,6 +24,14 @@ import type {
   AlertRevisionDetail,
   ExistsResponse,
 } from "@/api/services/alertRevisionService";
+
+// hooks fotos
+import { useRevisionPhotos } from "@/api/hooks/useAlertRevisionPhoto";
+import * as photoService from "@/api/services/alertRevisionPhotoService";
+import type {
+  AlertRevisionPhotoDetail,
+  AlertRevisionPhotoSummary,
+} from "@/api/services/alertRevisionPhotoService";
 
 function isCriticalSeverity(sev?: string | null) {
   return ["HIGH", "CRITICAL", "ALTA", "BLOQUEA_OPERACION", "BLOQUEA_OPERACIÓN"].includes(
@@ -143,6 +152,17 @@ function pickUnknown(obj: Record<string, unknown>, keys: string[]): unknown {
   return undefined;
 }
 
+/**
+ * IMPORTANTÍSIMO:
+ * - limpiamos whitespace del base64 (a veces llega con \n)
+ * - fallback de contentType
+ */
+function toDataUrl(detail: AlertRevisionPhotoDetail) {
+  const ct = (detail.contentType || "image/jpeg").trim() || "image/jpeg";
+  const b64 = (detail.dataBase64 || "").replace(/\s/g, "");
+  return `data:${ct};base64,${b64}`;
+}
+
 export default function ComportamientoAlertDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -151,17 +171,25 @@ export default function ComportamientoAlertDetailPage() {
   const auth = getAuthDataWeb();
   const companyId = auth?.companyId;
 
+  const queryClient = useQueryClient();
+
   const { data: alert, isLoading, isError, error } = useAlert(companyId, id);
   const { mutateAsync: acknowledgeAlert, isPending: isAcking } = useAcknowledgeAlert();
 
   const handleBack = () => router.push("/app/comportamiento");
-  const handleGoRevision = () => router.push(`/app/comportamiento/revision/${id}`);
 
   const handleMarkReviewed = async () => {
     if (!alert || alert.acknowledged) return;
     if (!companyId) return;
     await acknowledgeAlert({ companyId, id: alert.id });
   };
+
+  // modal foto
+  const [openPhoto, setOpenPhoto] = useState<{
+    title: string;
+    src: string;
+    meta?: string;
+  } | null>(null);
 
   // ========== REVISION: exists + detail by alertId ==========
   const { data: existsData, isLoading: isExistsLoading } = useQuery<
@@ -190,12 +218,39 @@ export default function ComportamientoAlertDetailPage() {
     queryKey: ["alertRevision", "byAlert", companyId, id],
     enabled: !!companyId && Number.isFinite(id) && revisionExists,
     queryFn: () => revisionService.getAlertRevisionByAlertId(companyId as number, id),
+    staleTime: 5_000,
+    gcTime: 5 * 60 * 1000,
   });
 
   const revisionFields = useMemo(() => pickRevisionFields(revision), [revision]);
 
-  // revision como record seguro (sin any)
+  // revision como record seguro
   const r = asRecord(revision);
+  const revisionIdUnknown = pickUnknown(r, ["id", "revisionId"]);
+  const revisionId =
+    typeof revisionIdUnknown === "number"
+      ? revisionIdUnknown
+      : typeof revisionIdUnknown === "string"
+        ? Number(revisionIdUnknown)
+        : NaN;
+
+  const revisionIdSafe = Number.isFinite(revisionId) ? revisionId : undefined;
+
+  // 🔥 IMPORTANTE: cuando ya tengo revisionIdSafe, fuerzo refetch/invalidación
+  // para que NO dependa de ir a /revision/... y volver
+  useEffect(() => {
+    if (!companyId || !revisionIdSafe) return;
+
+    queryClient.invalidateQueries({
+      queryKey: ["alertRevisionPhotos", companyId, revisionIdSafe],
+    });
+
+    // también invalida cualquier detalle de foto que ya se haya cacheado mal
+    queryClient.invalidateQueries({
+      queryKey: ["alertRevisionPhoto", companyId, revisionIdSafe],
+    });
+  }, [companyId, revisionIdSafe, queryClient]);
+
   const revVehiculo = pickUnknown(r, ["vehiculo", "vehicle", "licensePlate"]);
   const revOperador = pickUnknown(r, ["operador", "operatorName", "userName"]);
   const revPlanta = pickUnknown(r, ["planta", "plant", "plantName"]);
@@ -215,6 +270,41 @@ export default function ComportamientoAlertDetailPage() {
     "reviewer",
     "userName",
   ]);
+
+  // ✅ LISTA (summary)
+  const {
+    data: photosSummary,
+    isLoading: isPhotosLoading,
+    isError: isPhotosError,
+    error: photosError,
+  } = useRevisionPhotos({
+    companyId: companyId as number | undefined,
+    revisionId: revisionIdSafe,
+  });
+
+  const fotosCount = photosSummary?.length ?? 0;
+
+  // top 6
+  const topPhotos = useMemo<AlertRevisionPhotoSummary[]>(
+    () => (photosSummary ?? []).slice(0, 6),
+    [photosSummary]
+  );
+
+  // ✅ DETAIL por cada foto (incluye dataBase64)
+  const photoDetailsQueries = useQueries({
+    queries: topPhotos.map((p) => ({
+      queryKey: ["alertRevisionPhoto", companyId, revisionIdSafe, p.id],
+      enabled: !!companyId && !!revisionIdSafe && !!p.id,
+      queryFn: () =>
+        photoService.getRevisionPhotoById({
+          companyId: companyId as number,
+          revisionId: revisionIdSafe as number,
+          photoId: p.id,
+        }),
+      staleTime: 60_000,
+      gcTime: 5 * 60 * 1000,
+    })),
+  });
 
   if (!companyId) {
     return (
@@ -280,16 +370,54 @@ export default function ComportamientoAlertDetailPage() {
       ? new Date(receivedAtUnknown).toLocaleString()
       : "";
 
-  const fotosUnknown = pickUnknown(r, ["fotos"]);
-  const fotosCount = Array.isArray(fotosUnknown) ? (fotosUnknown as unknown[]).length : 0;
-
-  const createdAt = pickUnknown(r, ["createdAt"]); // unknown
+  const createdAt = pickUnknown(r, ["createdAt"]);
   const hasCreatedAt =
     createdAt !== undefined && createdAt !== null && String(createdAt).trim() !== "";
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-16 md:pb-4">
-      {/* Header con botón de volver + acciones */}
+      {/* MODAL FOTO */}
+      {openPhoto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setOpenPhoto(null)}
+        >
+          <div
+            className="w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-100">
+                  {openPhoto.title}
+                </p>
+                {openPhoto.meta && (
+                  <p className="truncate text-[11px] text-slate-400">{openPhoto.meta}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenPhoto(null)}
+                className="rounded-lg border border-slate-700 bg-slate-900/40 p-2 text-slate-200 hover:border-indigo-500 hover:text-indigo-200"
+                aria-label="Cerrar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="bg-black">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={openPhoto.src}
+                alt={openPhoto.title}
+                className="max-h-[75vh] w-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
       <div className="space-y-2">
         <button
           type="button"
@@ -332,32 +460,21 @@ export default function ComportamientoAlertDetailPage() {
               )}
             </span>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleGoRevision}
-                className="inline-flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-indigo-500 hover:bg-slate-900 hover:text-indigo-300"
-              >
-                <ClipboardList className="h-4 w-4" />
-                Revisión
-              </button>
-
-              <button
-                type="button"
-                disabled={alert.acknowledged || isAcking}
-                onClick={handleMarkReviewed}
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-medium",
-                  alert.acknowledged
-                    ? "cursor-default border-emerald-700 bg-emerald-900/40 text-emerald-200"
-                    : "border-emerald-700 bg-emerald-900/40 text-emerald-200 hover:border-emerald-500 hover:text-emerald-100",
-                  isAcking && "cursor-not-allowed opacity-60"
-                )}
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                {alert.acknowledged ? "Ya revisada" : "Marcar como revisada"}
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={alert.acknowledged || isAcking}
+              onClick={handleMarkReviewed}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-medium",
+                alert.acknowledged
+                  ? "cursor-default border-emerald-700 bg-emerald-900/40 text-emerald-200"
+                  : "border-emerald-700 bg-emerald-900/40 text-emerald-200 hover:border-emerald-500 hover:text-emerald-100",
+                isAcking && "cursor-not-allowed opacity-60"
+              )}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {alert.acknowledged ? "Ya revisada" : "Marcar como revisada"}
+            </button>
           </div>
         </div>
       </div>
@@ -423,13 +540,13 @@ export default function ComportamientoAlertDetailPage() {
         </div>
       </section>
 
-      {/* Descripción textual */}
+      {/* Descripción */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
         <h2 className="text-xs font-semibold text-slate-200 sm:text-sm">Descripción</h2>
         <p className="mt-2 text-xs text-slate-300 sm:text-sm">{descriptionText}</p>
       </section>
 
-      {/* Contenido HTML técnico */}
+      {/* HTML técnico */}
       {rawPayload && (
         <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
           <h2 className="text-xs font-semibold text-slate-200 sm:text-sm">
@@ -449,9 +566,9 @@ export default function ComportamientoAlertDetailPage() {
         </section>
       )}
 
-      {/* ✅ REVISION DEBAJO (bonita + raw colapsable) */}
+      {/* ✅ REVISION SIEMPRE VISIBLE (sin botones) */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-semibold text-slate-100">Revisión</h2>
@@ -475,45 +592,13 @@ export default function ComportamientoAlertDetailPage() {
               Estado de revisión asociado a esta alerta.
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={handleGoRevision}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-600/60 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-600/20 sm:w-auto"
-          >
-            <ClipboardList className="h-4 w-4" />
-            Abrir revisión
-          </button>
         </div>
 
-        {isExistsLoading && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-            <div className="h-4 w-4 animate-spin rounded-full border border-slate-500 border-t-transparent" />
-            <p className="text-xs text-slate-400">Consultando si existe revisión…</p>
-          </div>
-        )}
-
         {!isExistsLoading && !revisionExists && (
-          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-            <p className="text-sm font-semibold text-slate-200">Aún no hay revisión</p>
-            <p className="mt-1 text-xs text-slate-400">
-              Puedes crearla/editarla desde la pantalla de revisión.
+          <div className="mt-4 rounded-xl border border-amber-800 bg-amber-950/30 p-3">
+            <p className="text-xs text-amber-200">
+              No hay revisión registrada para esta alerta.
             </p>
-
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                <p className="text-[11px] font-medium text-slate-400">Sugerencia</p>
-                <p className="mt-1 text-xs text-slate-300">
-                  Usa “Abrir revisión” para registrar motivo, acción y evidencia.
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                <p className="text-[11px] font-medium text-slate-400">Tip</p>
-                <p className="mt-1 text-xs text-slate-300">
-                  Si ya se atendió el evento, marca la alerta como revisada arriba.
-                </p>
-              </div>
-            </div>
           </div>
         )}
 
@@ -554,14 +639,14 @@ export default function ComportamientoAlertDetailPage() {
                     <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-950/50 px-2 py-0.5 text-[11px] font-medium text-slate-300">
                       ID rev: {String(pickUnknown(r, ["id"]) ?? "—")}
                     </span>
-                    <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-950/50 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                      AlertId: {String(pickUnknown(r, ["alertId"]) ?? id)}
-                    </span>
                     {hasCreatedAt && (
                       <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-950/50 px-2 py-0.5 text-[11px] font-medium text-slate-300">
                         Creada: {fmtDateTimeMaybe(createdAt)}
                       </span>
                     )}
+                    <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-950/50 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+                      Fotos: {fotosCount}
+                    </span>
                   </div>
                 </div>
 
@@ -604,21 +689,127 @@ export default function ComportamientoAlertDetailPage() {
                   </div>
                 )}
 
-                {Array.isArray(fotosUnknown) && (
-                  <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-                    <p className="text-[11px] font-medium text-slate-400">Evidencias</p>
-                    <p className="mt-1 text-xs text-slate-300">
-                      Fotos:{" "}
-                      <span className="font-semibold text-slate-100">{fotosCount}</span>
-                    </p>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      (Si luego la API devuelve URLs, aquí te armo un grid de thumbnails.)
+                {/* FOTOS */}
+                <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ImageIcon className="h-4 w-4 text-slate-500" />
+                      <p className="text-xs font-semibold text-slate-100">Fotos</p>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Mostrando {Math.min(6, fotosCount)} de {fotosCount}
                     </p>
                   </div>
-                )}
+
+                  {!revisionIdSafe && (
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      No pude resolver revisionId para traer fotos.
+                    </p>
+                  )}
+
+                  {revisionIdSafe && isPhotosLoading && (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+                      <div className="h-4 w-4 animate-spin rounded-full border border-slate-500 border-t-transparent" />
+                      Cargando lista de fotos…
+                    </div>
+                  )}
+
+                  {revisionIdSafe && isPhotosError && (
+                    <p className="mt-3 text-xs text-rose-200">
+                      Error fotos: {photosError?.message ?? "No se pudo listar fotos."}
+                    </p>
+                  )}
+
+                  {revisionIdSafe &&
+                    !isPhotosLoading &&
+                    !isPhotosError &&
+                    fotosCount === 0 && (
+                      <p className="mt-3 text-[11px] text-slate-500">
+                        No hay fotos registradas.
+                      </p>
+                    )}
+
+                  {revisionIdSafe && fotosCount > 0 && (
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                      {topPhotos.map((p, idx) => {
+                        const q = photoDetailsQueries[idx];
+                        const isQLoading = q?.isLoading;
+                        const isQError = q?.isError;
+                        const data = q?.data as AlertRevisionPhotoDetail | undefined;
+
+                        const filename = p.fileName ?? `Foto ${p.id}`;
+
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60 text-left hover:border-indigo-500/60"
+                            title={filename}
+                            onClick={() => {
+                              if (!data) return;
+                              const src = toDataUrl(data);
+                              setOpenPhoto({
+                                title: filename,
+                                src,
+                                meta: `contentType=${String(data.contentType)} | base64Len=${data.dataBase64?.length ?? 0}`,
+                              });
+                            }}
+                          >
+                            {isQLoading && (
+                              <div className="flex h-24 items-center justify-center text-[11px] text-slate-500">
+                                Cargando…
+                              </div>
+                            )}
+
+                            {isQError && (
+                              <div className="flex h-24 items-center justify-center text-[11px] text-rose-200">
+                                Error
+                              </div>
+                            )}
+
+                            {data && (
+                              <>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={toDataUrl(data)}
+                                  alt={filename}
+                                  className="h-24 w-full object-cover"
+                                  loading="lazy"
+                                  onError={(e) => {
+                                    console.error("IMG error", {
+                                      id: data.id,
+                                      contentType: data.contentType,
+                                      len: data.dataBase64?.length ?? 0,
+                                    });
+                                    (e.currentTarget as HTMLImageElement).style.display =
+                                      "none";
+                                  }}
+                                />
+                                <div className="px-2 py-1">
+                                  <p className="truncate text-[10px] text-slate-300">
+                                    {filename}
+                                  </p>
+                                  <p className="truncate text-[10px] text-slate-500">
+                                    len: {data.dataBase64?.length ?? 0}
+                                  </p>
+                                </div>
+                              </>
+                            )}
+
+                            {!isQLoading && !isQError && !data && (
+                              <div className="flex h-24 flex-col items-center justify-center gap-1 text-[11px] text-slate-500">
+                                <span>No data</span>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Raw JSON colapsable */}
+              {/* Debug opcional */}
               <details className="group rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
                 <summary className="flex cursor-pointer list-none items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -640,7 +831,6 @@ export default function ComportamientoAlertDetailPage() {
                 </pre>
               </details>
 
-              {/* (opcional) Lista “tolerante” de campos detectados */}
               {revisionFields.length > 0 && (
                 <details className="group rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
                   <summary className="flex cursor-pointer list-none items-center justify-between">
