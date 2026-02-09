@@ -20,7 +20,7 @@ import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-// ✅ UI (calendario tipo DailyTotalCard)
+// ✅ Popover + Calendar (shadcn)
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 
@@ -46,7 +46,7 @@ type ShiftDto = {
   batchId?: string | null;
 
   responsibleDnis?: string[] | null;
-  vehiclePlates?: string | null;
+  vehiclePlates?: string[] | null;
 
   fleetId?: number | null;
   fleetName?: string | null;
@@ -61,6 +61,19 @@ function todayYmdLocal() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function dateToYmdLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function ymdToDateLocal(ymd: string): Date | undefined {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return undefined;
+  return new Date(y, m - 1, d, 0, 0, 0, 0);
 }
 
 function uniq(values: string[]) {
@@ -111,24 +124,6 @@ function formatDateEsPE(ymd: string) {
   })
     .format(dt)
     .replace(".", "");
-}
-
-// ======== helpers fecha <-> Date ========
-function ymdToDateLocal(ymd: string): Date | undefined {
-  const [y, m, d] = (ymd || "").split("-").map(Number);
-  if (!y || !m || !d) return undefined;
-  const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
-  return Number.isNaN(dt.getTime()) ? undefined : dt;
-}
-function dateToYmdLocal(dt: Date): string {
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-function monthYearLabelEsPE(dt?: Date) {
-  if (!dt) return "Fecha";
-  return new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric" }).format(dt);
 }
 
 // ======== mapeo seguro desde ShiftSummary/ShiftDetail hacia tu view model ========
@@ -406,14 +401,13 @@ export default function TurnosPage() {
     return Number.isFinite(n) && n > 0 ? n : undefined;
   }, [auth?.companyId]);
 
-  const [date, setDate] = useState<string>(() => todayYmdLocal());
-
-  // ✅ calendario popover (bonito)
+  // ✅ NUEVO: fecha como Date para el Calendar (y string para API)
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [openDate, setOpenDate] = useState(false);
-  const selectedDate = useMemo(() => ymdToDateLocal(date), [date]);
 
-  const formattedDateBtn = useMemo(() => {
-    if (!selectedDate) return "Seleccionar fecha";
+  const date = useMemo(() => dateToYmdLocal(selectedDate), [selectedDate]);
+
+  const formattedDate = useMemo(() => {
     return new Intl.DateTimeFormat("es-PE", {
       weekday: "short",
       day: "2-digit",
@@ -424,7 +418,11 @@ export default function TurnosPage() {
       .replace(".", "");
   }, [selectedDate]);
 
-  const monthYearLabel = useMemo(() => monthYearLabelEsPE(selectedDate), [selectedDate]);
+  const monthYearLabel = useMemo(() => {
+    return new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric" }).format(
+      selectedDate
+    );
+  }, [selectedDate]);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -435,7 +433,7 @@ export default function TurnosPage() {
   const [fullTabs, setFullTabs] = useState<Record<number, ShiftTab>>({});
   const getTab = (map: Record<number, ShiftTab>, id: number) => map[id] ?? "RESP";
 
-  // ✅ AHORA: LIST BY DATE DETAIL
+  // ✅ LIST BY DATE DETAIL
   const shiftsQuery = useShiftsByDateDetail({ companyId, date });
 
   // IMPORT EXCEL
@@ -448,8 +446,6 @@ export default function TurnosPage() {
     onSuccess: (_saved, vars) => {
       queryClient.invalidateQueries({ queryKey: ["shifts"] });
       queryClient.invalidateQueries({ queryKey: ["shifts", "current", vars.companyId] });
-
-      // ✅ invalida la key detail
       queryClient.invalidateQueries({
         queryKey: ["shifts", "date", "detail", vars.companyId, vars.date],
       });
@@ -532,12 +528,13 @@ export default function TurnosPage() {
     shiftsQuery.refetch();
   };
 
-  // ✅ centralizamos cambio de fecha (resets)
-  const applyDate = (nextYmd: string) => {
-    setDate(nextYmd);
+  const handleChangeDate = (d?: Date) => {
+    if (!d) return;
+    setSelectedDate(d);
     importMutation.reset();
     setPreviewTabs({});
     setFullTabs({});
+    setOpenDate(false);
   };
 
   if (!companyId) {
@@ -746,7 +743,7 @@ export default function TurnosPage() {
         </div>
       </section>
 
-      {/* Fecha (card) ✅ bonito con calendario */}
+      {/* Fecha (card) - ✅ CALENDARIO BONITO */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -757,7 +754,7 @@ export default function TurnosPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* ✅ Popover calendario */}
+            {/* Botón calendario estilo DailyTotalCard */}
             <Popover open={openDate} onOpenChange={setOpenDate}>
               <PopoverTrigger asChild>
                 <Button
@@ -768,7 +765,7 @@ export default function TurnosPage() {
                   title="Cambiar fecha"
                 >
                   <CalendarIcon className="h-4 w-4" />
-                  <span className="max-w-[220px] truncate">{formattedDateBtn}</span>
+                  <span className="max-w-[190px] truncate">{formattedDate}</span>
                   <span className="ml-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-bold text-indigo-200">
                     CAMBIAR
                   </span>
@@ -779,7 +776,7 @@ export default function TurnosPage() {
                 align="end"
                 side="bottom"
                 sideOffset={10}
-                className="w-[min(440px,calc(100vw-2rem))] rounded-2xl border-slate-800 bg-slate-950/95 p-3 shadow-xl"
+                className="w-[360px] rounded-2xl border-slate-800 bg-slate-950/95 p-3 shadow-xl"
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -795,15 +792,12 @@ export default function TurnosPage() {
                     <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1 text-[11px] font-medium text-slate-200">
                       {monthYearLabel}
                     </span>
+
                     <Button
                       type="button"
                       variant="outline"
                       className="h-8 rounded-xl border-slate-800 bg-slate-950/60 px-2 text-[11px] text-slate-200 hover:bg-slate-900"
-                      onClick={() => {
-                        const ymd = todayYmdLocal();
-                        applyDate(ymd);
-                      }}
-                      title="Ir a hoy"
+                      onClick={() => handleChangeDate(new Date())}
                     >
                       Hoy
                     </Button>
@@ -814,11 +808,7 @@ export default function TurnosPage() {
                   <Calendar
                     mode="single"
                     selected={selectedDate}
-                    onSelect={(d) => {
-                      if (!d) return;
-                      applyDate(dateToYmdLocal(d));
-                      setOpenDate(false);
-                    }}
+                    onSelect={(d) => handleChangeDate(d)}
                     initialFocus
                   />
                 </div>
@@ -826,9 +816,7 @@ export default function TurnosPage() {
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <div className="text-[11px] text-slate-500">
                     Seleccionada:{" "}
-                    <span className="font-semibold text-slate-200">
-                      {formatDateEsPE(date)}
-                    </span>
+                    <span className="font-semibold text-slate-200">{formattedDate}</span>
                   </div>
 
                   <Button
@@ -857,6 +845,12 @@ export default function TurnosPage() {
               {formatDateEsPE(date)}
             </span>
           </div>
+        </div>
+
+        {/* mini hint */}
+        <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
+          <CalendarDays className="h-4 w-4 text-slate-400" />
+          <span>Fecha API: {date}</span>
         </div>
       </section>
 
@@ -907,7 +901,7 @@ export default function TurnosPage() {
               key={String(s.id)}
               shift={s}
               variant="full"
-              tab={getTab(fullTabs, s.id)}
+              tab={(fullTabs[s.id] ?? "RESP") as ShiftTab}
               onTab={(next) => setFullTabs((prev) => ({ ...prev, [s.id]: next }))}
             />
           ))}
