@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Gauge, AlertCircle, ListOrdered, Settings } from "lucide-react";
+import { Gauge, AlertCircle, ListOrdered } from "lucide-react";
 
 import type { AlertSummary } from "@/api/services/alertService";
 import * as alertService from "@/api/services/alertService";
@@ -36,12 +36,6 @@ function mapSeverityToBucket(severity?: string | null): SeverityBucket {
   return "LOW";
 }
 
-/**
- * ✅ Tipos auxiliares para evitar `any`
- * (tolerante a campos alternativos del backend)
- *
- * NOTA: `reviewed` ya viene en AlertSummary (DTO). Aquí NO lo duplicamos.
- */
 type AlertExtras = {
   id?: string | number;
   alertId?: string | number;
@@ -49,13 +43,11 @@ type AlertExtras = {
   licensePlate?: string | null;
   vehicleCode?: string | null;
 
-  // planta (compatibilidad)
   plantName?: string | null;
   planta?: string | null;
   siteName?: string | null;
   locationName?: string | null;
 
-  // ✅ area (INFRAESTRUCTURA)
   areaName?: string | null;
   area?: string | null;
   areaCode?: string | null;
@@ -77,12 +69,10 @@ function getAlertId(a: AlertSummary): string | number | undefined {
   return x.id ?? x.alertId ?? a.id;
 }
 
-// ✅ Ya revisada: ahora viene directo del backend como `reviewed`
 function isAlertReviewed(a: AlertSummary): boolean {
   return !!a.reviewed;
 }
 
-// ---- Helpers para “leer” campos (tolerante a backend) ----
 // ✅ CAMBIO: priorizar vehicleCode en lugar de licensePlate
 function getVehicleLabel(a: AlertSummary) {
   const x = a as AlertLike;
@@ -102,7 +92,6 @@ function getPlantLabel(a: AlertSummary) {
   return plant || "Planta";
 }
 
-// ✅ área (INFRAESTRUCTURA)
 function getAreaLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const area =
@@ -116,7 +105,6 @@ function getAreaLabel(a: AlertSummary) {
   return area || "Área";
 }
 
-// ✅ operador con fallback "Sin nombre"
 function getOperatorGroupLabel(a: AlertSummary) {
   const x = a as AlertLike;
   const op =
@@ -133,7 +121,7 @@ function uniqSorted(values: string[]) {
   );
 }
 
-// ---- Mes (para el gráfico) ----
+// ---- Mes (para el gráfico y filtros) ----
 function monthKey(d: Date) {
   const y = d.getFullYear();
   const m = d.getMonth() + 1;
@@ -144,11 +132,12 @@ function parseMonthKey(key: string) {
   return { y: Number(yStr), m: Number(mStr) };
 }
 function monthShortLabelFromKey(key: string) {
-  const { m } = parseMonthKey(key);
-  const date = new Date(2000, (m || 1) - 1, 1);
-  return new Intl.DateTimeFormat("es-PE", { month: "short" })
+  const { y, m } = parseMonthKey(key);
+  const date = new Date(y || 2000, (m || 1) - 1, 1);
+  const mon = new Intl.DateTimeFormat("es-PE", { month: "short" })
     .format(date)
     .replace(".", "");
+  return `${mon} ${y}`;
 }
 function addMonths(base: Date, delta: number) {
   return new Date(base.getFullYear(), base.getMonth() + delta, 1);
@@ -160,31 +149,41 @@ function rangeMonthsAsc(endInclusive: Date, count: number) {
   return keys;
 }
 
-// ✅ helpers rango del mes actual (local)
 function startOfMonthLocal(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
 }
 function startOfNextMonthLocal(d: Date) {
   return new Date(d.getFullYear(), d.getMonth() + 1, 1, 0, 0, 0, 0);
 }
+function startOfMonthFromKeyLocal(key: string) {
+  const { y, m } = parseMonthKey(key);
+  return new Date(y, (m || 1) - 1, 1, 0, 0, 0, 0);
+}
+function startOfNextMonthFromKeyLocal(key: string) {
+  const { y, m } = parseMonthKey(key);
+  return new Date(y, m || 1, 1, 0, 0, 0, 0);
+}
 function inRange(dt: Date, start: Date, end: Date) {
   return dt.getTime() >= start.getTime() && dt.getTime() < end.getTime();
 }
 
-// ---- Types chart ----
 type ChartPoint = {
   key: string;
   mes: string;
   total: number;
 };
 
-// ✅ Para el gráfico de barras (top 10 dinámico según modo)
 type BarPoint = {
-  categoria: string; // equipo / área / operador
+  categoria: string;
   total: number;
 };
 
-// ✅ Tipo de página
+type BarPointUI = {
+  categoriaRaw: string;
+  categoria: string;
+  total: number;
+};
+
 type PageResponse<T> = {
   content: T[];
   number: number;
@@ -195,7 +194,6 @@ type PageResponse<T> = {
   first?: boolean;
 };
 
-// ✅ helper para truncar labels en charts/listas
 function clampLabel(s: string, max = 18) {
   const t = (s || "").trim();
   if (t.length <= max) return t;
@@ -212,17 +210,25 @@ export default function ComportamientoPage() {
   const [mode, setMode] = useState<Mode>("EQUIPO");
   const [selectedKey, setSelectedKey] = useState<string>("");
 
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string>("");
+
   const PAGE_SIZE = 200;
 
-  // ✅ Mes actual (lista/top10/selector)
-  const monthStart = useMemo(() => startOfMonthLocal(new Date()), []);
-  const monthEnd = useMemo(() => startOfNextMonthLocal(new Date()), []);
+  // ✅ paginación SOLO para la lista de abajo
+  const LIST_PAGE_SIZE = 10;
+  const [listPage, setListPage] = useState<number>(1);
 
-  // ✅ Rango para el gráfico: últimos 6 meses (incluye el mes actual)
+  // Reset de paginación cuando cambia el filtro (solo lista)
+  useEffect(() => {
+    setListPage(1);
+  }, [mode, selectedKey, selectedMonthKey]);
+
   const sixMonthsStart = useMemo(() => {
     const now = new Date();
     return startOfMonthLocal(addMonths(now, -5));
   }, []);
+
+  const monthEndGlobal = useMemo(() => startOfNextMonthLocal(new Date()), []);
 
   const {
     data,
@@ -254,7 +260,6 @@ export default function ComportamientoPage() {
       const next = lastPage.number + 1;
       if (next >= lastPage.totalPages) return undefined;
 
-      // ✅ cortar cuando ya empezamos a ver cosas más antiguas que el rango (6 meses)
       const foundOlderThanRange = (lastPage.content ?? []).some((a) => {
         if (!a?.eventTime) return false;
         const dt = new Date(a.eventTime);
@@ -266,36 +271,76 @@ export default function ComportamientoPage() {
     staleTime: 30_000,
   });
 
-  // auto-cargar páginas hasta completar el rango (6 meses)
   useEffect(() => {
     if (hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // ✅ ALERTAS DEL MES (para lista/top10/selector)
-  const alerts: AlertSummary[] = useMemo(() => {
-    const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
-    return all.filter((a) => {
-      if (!a?.eventTime) return false;
-      const dt = new Date(a.eventTime);
-      if (Number.isNaN(dt.getTime())) return false;
-      return inRange(dt, monthStart, monthEnd);
-    });
-  }, [data, monthStart, monthEnd]);
-
-  // ✅ ALERTAS ÚLTIMOS 6 MESES (solo para gráfico)
   const alerts6m: AlertSummary[] = useMemo(() => {
     const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
     return all.filter((a) => {
       if (!a?.eventTime) return false;
       const dt = new Date(a.eventTime);
       if (Number.isNaN(dt.getTime())) return false;
-      return inRange(dt, sixMonthsStart, monthEnd);
+      return inRange(dt, sixMonthsStart, monthEndGlobal);
     });
-  }, [data, sixMonthsStart, monthEnd]);
+  }, [data, sixMonthsStart, monthEndGlobal]);
 
-  // Top 10 dinámico según modo (mes actual)
+  const availableMonthKeys: string[] = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const a of alerts6m) {
+      if (!a?.eventTime) continue;
+      const dt = new Date(a.eventTime);
+      if (Number.isNaN(dt.getTime())) continue;
+      const k = monthKey(new Date(dt.getFullYear(), dt.getMonth(), 1));
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+
+    return Array.from(counts.entries())
+      .filter(([, total]) => total > 0)
+      .map(([k]) => k)
+      .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  }, [alerts6m]);
+
+  useEffect(() => {
+    const current = monthKey(startOfMonthLocal(new Date()));
+    if (!availableMonthKeys.length) {
+      setSelectedMonthKey("");
+      return;
+    }
+    if (availableMonthKeys.includes(current)) {
+      setSelectedMonthKey((prev) =>
+        prev && availableMonthKeys.includes(prev) ? prev : current
+      );
+      return;
+    }
+    setSelectedMonthKey((prev) =>
+      prev && availableMonthKeys.includes(prev) ? prev : availableMonthKeys[0]
+    );
+  }, [availableMonthKeys.join("|")]);
+
+  const monthStartSelected = useMemo(() => {
+    if (!selectedMonthKey) return startOfMonthLocal(new Date());
+    return startOfMonthFromKeyLocal(selectedMonthKey);
+  }, [selectedMonthKey]);
+
+  const monthEndSelected = useMemo(() => {
+    if (!selectedMonthKey) return startOfNextMonthLocal(new Date());
+    return startOfNextMonthFromKeyLocal(selectedMonthKey);
+  }, [selectedMonthKey]);
+
+  const alerts: AlertSummary[] = useMemo(() => {
+    const all = (data?.pages ?? []).flatMap((p) => p.content ?? []);
+    return all.filter((a) => {
+      if (!a?.eventTime) return false;
+      const dt = new Date(a.eventTime);
+      if (Number.isNaN(dt.getTime())) return false;
+      return inRange(dt, monthStartSelected, monthEndSelected);
+    });
+  }, [data, monthStartSelected, monthEndSelected]);
+
   const barMeta = useMemo(() => {
     const title =
       mode === "EQUIPO"
@@ -330,7 +375,14 @@ export default function ComportamientoPage() {
       .slice(0, 10);
   }, [alerts, mode]);
 
-  // Opciones del combobox (mes actual)
+  const barDataUI: BarPointUI[] = useMemo(() => {
+    return barData.map((x) => ({
+      categoriaRaw: x.categoria,
+      categoria: x.categoria,
+      total: x.total,
+    }));
+  }, [barData]);
+
   const options = useMemo(() => {
     if (mode === "EQUIPO") return uniqSorted(alerts.map(getVehicleLabel));
     if (mode === "INFRAESTRUCTURA") return uniqSorted(alerts.map(getAreaLabel));
@@ -348,7 +400,6 @@ export default function ComportamientoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, options.join("|")]);
 
-  // Filtrado “coincidente” (MES ACTUAL: lista)
   const filteredAlerts = useMemo(() => {
     if (!selectedKey) return [];
     const match = (a: AlertSummary) => {
@@ -359,7 +410,38 @@ export default function ComportamientoPage() {
     return alerts.filter(match);
   }, [alerts, mode, selectedKey]);
 
-  // ✅ Filtrado “coincidente” (6 MESES: gráfico)
+  // ✅ ordenar DESC por eventTime SOLO para la lista paginada
+  const filteredAlertsSorted = useMemo(() => {
+    const arr = [...filteredAlerts];
+    arr.sort((a, b) => {
+      const ta = a?.eventTime ? new Date(a.eventTime).getTime() : 0;
+      const tb = b?.eventTime ? new Date(b.eventTime).getTime() : 0;
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+      if (Number.isNaN(ta)) return 1;
+      if (Number.isNaN(tb)) return -1;
+      return tb - ta;
+    });
+    return arr;
+  }, [filteredAlerts]);
+
+  // ✅ paginado de lista
+  const totalList = filteredAlertsSorted.length;
+  const totalListPages = Math.max(1, Math.ceil(totalList / LIST_PAGE_SIZE));
+  const safeListPage = Math.min(Math.max(listPage, 1), totalListPages);
+
+  const pagedAlerts = useMemo(() => {
+    const start = (safeListPage - 1) * LIST_PAGE_SIZE;
+    const end = start + LIST_PAGE_SIZE;
+    return filteredAlertsSorted.slice(start, end);
+  }, [filteredAlertsSorted, safeListPage]);
+
+  const listRangeText = useMemo(() => {
+    if (totalList === 0) return "0";
+    const startIdx = (safeListPage - 1) * LIST_PAGE_SIZE + 1;
+    const endIdx = Math.min(safeListPage * LIST_PAGE_SIZE, totalList);
+    return `${startIdx}–${endIdx} de ${totalList}`;
+  }, [safeListPage, totalList]);
+
   const filteredAlerts6m = useMemo(() => {
     if (!selectedKey) return [];
     const match = (a: AlertSummary) => {
@@ -381,9 +463,6 @@ export default function ComportamientoPage() {
     INFRAESTRUCTURA: "Área",
     OPERADOR: "Operador",
   };
-
-  const handleGoHistory = () => router.push("/app/alerts");
-  const handleGoSettings = () => router.push("/app/settings");
 
   const handleGoRevision = (alert: AlertSummary) => {
     const id = getAlertId(alert);
@@ -417,7 +496,13 @@ export default function ComportamientoPage() {
     router.push(`/app/comportamiento/detalle/${id}`);
   };
 
-  // ✅ Datos para gráfico mensual (últimos 6 meses) usando data REAL de 6 meses
+  const handleBarClick = (payload: unknown) => {
+    const p = payload as { payload?: Partial<BarPointUI> } | null;
+    const raw = p?.payload?.categoriaRaw;
+    if (!raw) return;
+    if (options.includes(raw)) setSelectedKey(raw);
+  };
+
   const chartData: ChartPoint[] = useMemo(() => {
     const now = new Date();
     const end = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -434,7 +519,7 @@ export default function ComportamientoPage() {
 
     return keys.map((k) => ({
       key: k,
-      mes: monthShortLabelFromKey(k),
+      mes: monthShortLabelFromKey(k).split(" ")[0],
       total: counts.get(k) ?? 0,
     }));
   }, [filteredAlerts6m]);
@@ -474,7 +559,6 @@ export default function ComportamientoPage() {
 
       {/* Controles + gráficas */}
       <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
-        {/* Tabs responsive */}
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-2">
             <span className="text-xs font-medium text-slate-400">Sección</span>
@@ -504,6 +588,35 @@ export default function ComportamientoPage() {
               })}
             </div>
 
+            <div className="mt-2 grid gap-2 md:grid-cols-[140px,1fr] md:items-center">
+              <span className="text-xs font-medium text-slate-400">Mes</span>
+
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <select
+                  value={selectedMonthKey}
+                  onChange={(e) => setSelectedMonthKey(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-indigo-500/60"
+                  disabled={availableMonthKeys.length === 0}
+                >
+                  {availableMonthKeys.length === 0 ? (
+                    <option value="">Sin meses con alertas (últimos 6 meses)</option>
+                  ) : (
+                    availableMonthKeys.map((k) => (
+                      <option key={k} value={k}>
+                        {monthShortLabelFromKey(k)}
+                      </option>
+                    ))
+                  )}
+                </select>
+
+                <span className="w-fit rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
+                  {selectedMonthKey
+                    ? `Mes: ${monthShortLabelFromKey(selectedMonthKey)}`
+                    : "Mes: —"}
+                </span>
+              </div>
+            </div>
+
             <p className="text-sm font-semibold text-slate-100">{titleByMode[mode]}</p>
           </div>
         </div>
@@ -514,8 +627,11 @@ export default function ComportamientoPage() {
             <div className="min-w-0">
               <p className="text-xs font-semibold text-slate-100">{barMeta.title}</p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Basado en todas las alertas del mes actual.
-                {isFetchingNextPage ? " Cargando más páginas…" : ""}
+                Click en una barra para seleccionar automáticamente abajo.
+                {selectedMonthKey
+                  ? ` (${monthShortLabelFromKey(selectedMonthKey)})`
+                  : ""}{" "}
+                {isFetchingNextPage ? " • Cargando más páginas…" : ""}
               </p>
             </div>
 
@@ -525,22 +641,22 @@ export default function ComportamientoPage() {
                 : mode === "INFRAESTRUCTURA"
                   ? "Áreas"
                   : "Operadores"}
-              : {barData.length}
+              : {barDataUI.length}
             </span>
           </div>
 
-          {/* Mobile: barras horizontales */}
+          {/* Mobile */}
           <div className="mt-3 h-[360px] w-full md:hidden">
-            {barData.length === 0 ? (
+            {barDataUI.length === 0 ? (
               <div className="flex h-full items-center justify-center text-xs text-slate-400">
                 No hay datos para graficar.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={barData.map((x) => ({
+                  data={barDataUI.map((x) => ({
                     ...x,
-                    categoria: clampLabel(x.categoria, 20),
+                    categoria: clampLabel(x.categoriaRaw, 20),
                   }))}
                   layout="vertical"
                   margin={{ top: 10, right: 12, left: 10, bottom: 10 }}
@@ -551,7 +667,6 @@ export default function ComportamientoPage() {
                     allowDecimals={false}
                     tickLine={false}
                     axisLine={false}
-                    tick={{ fontSize: 11, fill: "#94a3b8" }}
                   />
                   <YAxis
                     type="category"
@@ -559,7 +674,6 @@ export default function ComportamientoPage() {
                     width={110}
                     tickLine={false}
                     axisLine={false}
-                    tick={{ fontSize: 11, fill: "#94a3b8" }}
                   />
                   <Tooltip
                     formatter={(value?: string | number) =>
@@ -586,70 +700,70 @@ export default function ComportamientoPage() {
                     stroke="rgba(99, 102, 241, 1)"
                     strokeWidth={1}
                     isAnimationActive={false}
+                    style={{ cursor: "pointer" }}
+                    onClick={handleBarClick}
                   />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </div>
 
-          {/* Desktop: categorías en X */}
+          {/* Desktop */}
           <div className="mt-3 hidden h-[220px] w-full md:block">
-            {barData.length === 0 ? (
+            {barDataUI.length === 0 ? (
               <div className="flex h-full items-center justify-center text-xs text-slate-400">
                 No hay datos para graficar.
               </div>
             ) : (
-              <div className="h-full w-full overflow-hidden">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={barData}
-                    margin={{ top: 10, right: 16, left: 0, bottom: 10 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                    <XAxis
-                      dataKey="categoria"
-                      tickLine={false}
-                      axisLine={false}
-                      interval={0}
-                      tick={{ fontSize: 11, fill: "#94a3b8" }}
-                      tickFormatter={(v: string) => clampLabel(v, 10)}
-                    />
-                    <YAxis
-                      allowDecimals={false}
-                      tickLine={false}
-                      axisLine={false}
-                      width={30}
-                      tick={{ fontSize: 11, fill: "#94a3b8" }}
-                    />
-                    <Tooltip
-                      formatter={(value?: string | number) =>
-                        [`${value ?? ""}`, "Alertas"] as const
-                      }
-                      labelFormatter={(label?: ReactNode) =>
-                        `${barMeta.tooltipLabel}: ${typeof label === "string" ? label : ""}`
-                      }
-                      contentStyle={{
-                        background: "rgba(2, 6, 23, 0.95)",
-                        border: "1px solid rgba(30, 41, 59, 1)",
-                        borderRadius: 12,
-                        color: "#e2e8f0",
-                        fontSize: 12,
-                      }}
-                      labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
-                    />
-                    <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
-                    <Bar
-                      dataKey="total"
-                      name="Alertas"
-                      radius={[10, 10, 0, 0]}
-                      fill="rgba(99, 102, 241, 0.85)"
-                      stroke="rgba(99, 102, 241, 1)"
-                      strokeWidth={1}
-                      isAnimationActive={false}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={barDataUI}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis
+                    dataKey="categoria"
+                    tickLine={false}
+                    axisLine={false}
+                    interval={0}
+                    tickFormatter={(v: string) => clampLabel(v, 10)}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tickLine={false}
+                    axisLine={false}
+                    width={30}
+                  />
+                  <Tooltip
+                    formatter={(value?: string | number) =>
+                      [`${value ?? ""}`, "Alertas"] as const
+                    }
+                    labelFormatter={(label?: ReactNode) =>
+                      `${barMeta.tooltipLabel}: ${typeof label === "string" ? label : ""}`
+                    }
+                    contentStyle={{
+                      background: "rgba(2, 6, 23, 0.95)",
+                      border: "1px solid rgba(30, 41, 59, 1)",
+                      borderRadius: 12,
+                      color: "#e2e8f0",
+                      fontSize: 12,
+                    }}
+                    labelStyle={{ color: "#cbd5e1", fontWeight: 700 }}
+                  />
+                  <Legend wrapperStyle={{ color: "#cbd5e1", fontSize: 12 }} />
+                  <Bar
+                    dataKey="total"
+                    name="Alertas"
+                    radius={[10, 10, 0, 0]}
+                    fill="rgba(99, 102, 241, 0.85)"
+                    stroke="rgba(99, 102, 241, 1)"
+                    strokeWidth={1}
+                    isAnimationActive={false}
+                    style={{ cursor: "pointer" }}
+                    onClick={handleBarClick}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </div>
         </div>
@@ -690,7 +804,7 @@ export default function ComportamientoPage() {
                   type="button"
                   variant="outline"
                   className="h-9 rounded-xl border-slate-800 bg-slate-950/60 px-3 text-xs text-slate-200 hover:bg-slate-900"
-                  onClick={handleGoHistory}
+                  onClick={() => router.push("/app/alerts")}
                 >
                   Historial
                 </Button>
@@ -698,7 +812,7 @@ export default function ComportamientoPage() {
                   type="button"
                   variant="outline"
                   className="h-9 rounded-xl border-slate-800 bg-slate-950/60 px-3 text-xs text-slate-200 hover:bg-slate-900"
-                  onClick={handleGoSettings}
+                  onClick={() => router.push("/app/settings")}
                 >
                   Configuración
                 </Button>
@@ -769,13 +883,13 @@ export default function ComportamientoPage() {
           </div>
 
           <p className="mt-2 text-[11px] text-slate-500">
-            Nota: la lista y el Top 10 siguen siendo del mes actual; el gráfico usa los
+            Nota: el Top 10 y la lista siguen el mes seleccionado; el gráfico usa los
             últimos 6 meses.
           </p>
         </div>
       </section>
 
-      {/* Lista de alertas */}
+      {/* Lista de alertas (PAGINADA + MÁS RECIENTE PRIMERO) */}
       <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/80 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
@@ -787,15 +901,15 @@ export default function ComportamientoPage() {
                 Alertas coincidentes
               </h2>
               <p className="text-[11px] text-slate-500 sm:text-xs">
-                Mostrando alertas del mes que coinciden con{" "}
-                {labelByMode[mode].toLowerCase()} seleccionado.
+                Mostrando alertas del mes seleccionado que coinciden con{" "}
+                {labelByMode[mode].toLowerCase()} seleccionado. (Más recientes primero)
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={handleGoHistory}
+            onClick={() => router.push("/app/alerts")}
             className="inline-flex w-full items-center justify-center gap-1 rounded-xl border border-indigo-600/70 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-600/20 sm:w-auto"
           >
             <ListOrdered className="h-4 w-4" />
@@ -828,15 +942,66 @@ export default function ComportamientoPage() {
           </div>
         )}
 
-        {!isLoading && !isError && selectedKey && filteredAlerts.length === 0 && (
+        {!isLoading && !isError && selectedKey && totalList === 0 && (
           <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-slate-400 sm:text-sm">
             <p>No hay alertas coincidentes para “{selectedKey}”.</p>
           </div>
         )}
 
+        {/* Controles de paginación (chicos, arriba) */}
+        {!isLoading && !isError && selectedKey && totalList > 0 && (
+          <div className="mb-2 flex justify-center">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="h-8 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-xs font-semibold text-slate-200 disabled:opacity-50"
+                disabled={safeListPage <= 1}
+                onClick={() => setListPage(1)}
+                title="Ir a la primera página"
+              >
+                Primera
+              </button>
+
+              <button
+                type="button"
+                className="h-8 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-xs font-semibold text-slate-200 disabled:opacity-50"
+                disabled={safeListPage <= 1}
+                onClick={() => setListPage((p) => Math.max(1, p - 1))}
+                title="Página anterior"
+              >
+                Anterior
+              </button>
+
+              <span className="text-[11px] text-slate-500">
+                {safeListPage} / {totalListPages}
+              </span>
+
+              <button
+                type="button"
+                className="h-8 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-xs font-semibold text-slate-200 disabled:opacity-50"
+                disabled={safeListPage >= totalListPages}
+                onClick={() => setListPage((p) => Math.min(totalListPages, p + 1))}
+                title="Página siguiente"
+              >
+                Siguiente
+              </button>
+
+              <button
+                type="button"
+                className="h-8 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-xs font-semibold text-slate-200 disabled:opacity-50"
+                disabled={safeListPage >= totalListPages}
+                onClick={() => setListPage(totalListPages)}
+                title="Ir a la última página"
+              >
+                Última
+              </button>
+            </div>
+          </div>
+        )}
+
         {!isLoading &&
           !isError &&
-          filteredAlerts.map((alert, idx) => {
+          pagedAlerts.map((alert, idx) => {
             const vehicleCode = stripHtml(alert.vehicleCode);
             const licensePlate = stripHtml(alert.licensePlate);
             const shortDescription = stripHtml(alert.shortDescription);
@@ -849,8 +1014,10 @@ export default function ComportamientoPage() {
 
             return (
               <div
-                key={String(id ?? idx)}
-                className={`border-t border-slate-800 py-3 ${idx === 0 ? "first:border-t-0" : ""}`}
+                key={String(id ?? `${safeListPage}-${idx}`)}
+                className={`border-t border-slate-800 py-3 ${
+                  idx === 0 ? "first:border-t-0" : ""
+                }`}
               >
                 <div className="flex flex-col gap-2">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -861,10 +1028,16 @@ export default function ComportamientoPage() {
 
                       <p className="mt-0.5 text-[11px] text-slate-500">
                         {mode === "EQUIPO"
-                          ? `Área: ${getAreaLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
+                          ? `Área: ${getAreaLabel(
+                              alert
+                            )} • Operador: ${getOperatorGroupLabel(alert)}`
                           : mode === "INFRAESTRUCTURA"
-                            ? `Vehículo: ${getVehicleLabel(alert)} • Operador: ${getOperatorGroupLabel(alert)}`
-                            : `Vehículo: ${getVehicleLabel(alert)} • Área: ${getAreaLabel(alert)}`}
+                            ? `Vehículo: ${getVehicleLabel(
+                                alert
+                              )} • Operador: ${getOperatorGroupLabel(alert)}`
+                            : `Vehículo: ${getVehicleLabel(
+                                alert
+                              )} • Área: ${getAreaLabel(alert)}`}
                       </p>
                     </div>
 
@@ -921,16 +1094,56 @@ export default function ComportamientoPage() {
           })}
       </section>
 
-      <section className="min-w-0">
-        <button
-          type="button"
-          onClick={handleGoSettings}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2.5 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 sm:text-sm"
-        >
-          <Settings className="h-4 w-4" />
-          Abrir configuración de Alerty
-        </button>
-      </section>
+      {/* ✅ Paginación GRANDE: sin "Paginación" ni "Mostrando...", botones centrados */}
+      {!isLoading && !isError && selectedKey && totalList > 0 && (
+        <section className="min-w-0">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 shadow-sm sm:p-4">
+            <div className="flex justify-center">
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-4">
+                <button
+                  type="button"
+                  className="h-11 rounded-2xl border border-slate-700 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900 disabled:opacity-50"
+                  disabled={safeListPage <= 1}
+                  onClick={() => setListPage(1)}
+                  title="Ir a la primera página"
+                >
+                  Primera
+                </button>
+
+                <button
+                  type="button"
+                  className="h-11 rounded-2xl border border-slate-700 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900 disabled:opacity-50"
+                  disabled={safeListPage <= 1}
+                  onClick={() => setListPage((p) => Math.max(1, p - 1))}
+                  title="Página anterior"
+                >
+                  Anterior
+                </button>
+
+                <button
+                  type="button"
+                  className="h-11 rounded-2xl border border-slate-700 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900 disabled:opacity-50"
+                  disabled={safeListPage >= totalListPages}
+                  onClick={() => setListPage((p) => Math.min(totalListPages, p + 1))}
+                  title="Página siguiente"
+                >
+                  Siguiente
+                </button>
+
+                <button
+                  type="button"
+                  className="h-11 rounded-2xl border border-slate-700 bg-slate-950/60 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900 disabled:opacity-50"
+                  disabled={safeListPage >= totalListPages}
+                  onClick={() => setListPage(totalListPages)}
+                  title="Ir a la última página"
+                >
+                  Última
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
