@@ -13,11 +13,16 @@ import {
   Car,
   Layers,
   X,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 
 import { getAuthDataWeb } from "@/api/webAuthStorage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+
+// ✅ UI (calendario tipo DailyTotalCard)
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 // ✅ servicios API
 import * as shiftService from "@/api/services/shiftService";
@@ -41,7 +46,7 @@ type ShiftDto = {
   batchId?: string | null;
 
   responsibleDnis?: string[] | null;
-  vehiclePlates?: string[] | null;
+  vehiclePlates?: string | null;
 
   fleetId?: number | null;
   fleetName?: string | null;
@@ -106,6 +111,24 @@ function formatDateEsPE(ymd: string) {
   })
     .format(dt)
     .replace(".", "");
+}
+
+// ======== helpers fecha <-> Date ========
+function ymdToDateLocal(ymd: string): Date | undefined {
+  const [y, m, d] = (ymd || "").split("-").map(Number);
+  if (!y || !m || !d) return undefined;
+  const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+  return Number.isNaN(dt.getTime()) ? undefined : dt;
+}
+function dateToYmdLocal(dt: Date): string {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function monthYearLabelEsPE(dt?: Date) {
+  if (!dt) return "Fecha";
+  return new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric" }).format(dt);
 }
 
 // ======== mapeo seguro desde ShiftSummary/ShiftDetail hacia tu view model ========
@@ -385,6 +408,24 @@ export default function TurnosPage() {
 
   const [date, setDate] = useState<string>(() => todayYmdLocal());
 
+  // ✅ calendario popover (bonito)
+  const [openDate, setOpenDate] = useState(false);
+  const selectedDate = useMemo(() => ymdToDateLocal(date), [date]);
+
+  const formattedDateBtn = useMemo(() => {
+    if (!selectedDate) return "Seleccionar fecha";
+    return new Intl.DateTimeFormat("es-PE", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
+      .format(selectedDate)
+      .replace(".", "");
+  }, [selectedDate]);
+
+  const monthYearLabel = useMemo(() => monthYearLabelEsPE(selectedDate), [selectedDate]);
+
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -487,9 +528,16 @@ export default function TurnosPage() {
   };
 
   const handleRefresh = () => {
-    // si estabas viendo preview IMPORT, vuelve a DAY
     if (importMutation.data) importMutation.reset();
     shiftsQuery.refetch();
+  };
+
+  // ✅ centralizamos cambio de fecha (resets)
+  const applyDate = (nextYmd: string) => {
+    setDate(nextYmd);
+    importMutation.reset();
+    setPreviewTabs({});
+    setFullTabs({});
   };
 
   if (!companyId) {
@@ -698,7 +746,7 @@ export default function TurnosPage() {
         </div>
       </section>
 
-      {/* Fecha (card) */}
+      {/* Fecha (card) ✅ bonito con calendario */}
       <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -709,23 +757,91 @@ export default function TurnosPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/60 px-3 py-2">
-              <CalendarDays className="h-4 w-4 text-slate-300" />
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => {
-                  setDate(e.target.value);
-                  importMutation.reset();
-                  setPreviewTabs({});
-                  setFullTabs({});
-                }}
-                className={cn(
-                  "h-9 rounded-xl border border-slate-800 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none",
-                  "focus:border-indigo-500/60"
-                )}
-              />
-            </div>
+            {/* ✅ Popover calendario */}
+            <Popover open={openDate} onOpenChange={setOpenDate}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 gap-2 rounded-2xl border-indigo-600/60 bg-indigo-600/10 px-4 text-sm font-semibold text-indigo-100 shadow-sm hover:bg-indigo-600/20"
+                  aria-label="Cambiar fecha"
+                  title="Cambiar fecha"
+                >
+                  <CalendarIcon className="h-4 w-4" />
+                  <span className="max-w-[220px] truncate">{formattedDateBtn}</span>
+                  <span className="ml-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-bold text-indigo-200">
+                    CAMBIAR
+                  </span>
+                </Button>
+              </PopoverTrigger>
+
+              <PopoverContent
+                align="end"
+                side="bottom"
+                sideOffset={10}
+                className="w-[min(440px,calc(100vw-2rem))] rounded-2xl border-slate-800 bg-slate-950/95 p-3 shadow-xl"
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-100">
+                      Selecciona una fecha
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Haz clic en un día del calendario
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1 text-[11px] font-medium text-slate-200">
+                      {monthYearLabel}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-8 rounded-xl border-slate-800 bg-slate-950/60 px-2 text-[11px] text-slate-200 hover:bg-slate-900"
+                      onClick={() => {
+                        const ymd = todayYmdLocal();
+                        applyDate(ymd);
+                      }}
+                      title="Ir a hoy"
+                    >
+                      Hoy
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-2">
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={(d) => {
+                      if (!d) return;
+                      applyDate(dateToYmdLocal(d));
+                      setOpenDate(false);
+                    }}
+                    initialFocus
+                  />
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="text-[11px] text-slate-500">
+                    Seleccionada:{" "}
+                    <span className="font-semibold text-slate-200">
+                      {formatDateEsPE(date)}
+                    </span>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-8 rounded-xl border-slate-800 bg-slate-950/60 px-3 text-[11px] text-slate-200 hover:bg-slate-900"
+                    onClick={() => setOpenDate(false)}
+                  >
+                    Listo
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
 
             <Button
               type="button"
