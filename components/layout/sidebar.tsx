@@ -14,6 +14,7 @@ import {
   CalendarDays,
   Layers,
   Truck,
+  ListOrdered,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +27,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/comportamiento", label: "Comportamiento", icon: Activity },
+  { href: "/app/alerts", label: "Historial", icon: ListOrdered },
   { href: "/app/turnos", label: "Turnos", icon: CalendarDays },
   { href: "/app/flotas", label: "Flotas", icon: Truck },
   { href: "/app/users", label: "Usuarios", icon: UserCog },
