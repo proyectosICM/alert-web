@@ -112,3 +112,22 @@ export const deleteUser = async (companyId: number, userId: number) => {
     params: { companyId },
   });
 };
+
+// GET /api/users/by-dni?companyId=..&dni=..
+export const getUserByDni = async (params: { companyId: number; dni: string }) => {
+  const response = await api.get<GroupUserSummary>(`${endpoint}/by-dni`, {
+    params,
+  });
+  return response.data;
+};
+
+// GET /api/users/by-fullname?companyId=..&fullName=..
+export const getFirstUserByFullName = async (params: {
+  companyId: number;
+  fullName: string;
+}) => {
+  const response = await api.get<GroupUserSummary>(`${endpoint}/by-fullname`, {
+    params,
+  });
+  return response.data;
+};

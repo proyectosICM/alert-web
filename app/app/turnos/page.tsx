@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
 import {
   CalendarDays,
   Clock,
@@ -27,6 +27,10 @@ import { Calendar } from "@/components/ui/calendar";
 // ✅ servicios API
 import * as shiftService from "@/api/services/shiftService";
 import type { ShiftDetail, ShiftSummary } from "@/api/services/shiftService";
+
+// ✅ NUEVO: userService (para resolver DNI -> nombre)
+import * as userService from "@/api/services/userService";
+import type { GroupUserSummary } from "@/api/services/userService";
 
 // ✅ usa el hook DETAIL que ya creaste
 import { useShiftsByDateDetail } from "@/api/hooks/useShifts";
@@ -246,16 +250,20 @@ function ShiftCard({
   variant,
   tab,
   onTab,
+  fullNameByDni,
 }: {
   shift: ShiftDto;
   variant: "preview" | "full";
   tab: ShiftTab;
   onTab: (next: ShiftTab) => void;
+  fullNameByDni?: Map<string, string>;
 }) {
   const name = normalizeShiftName(shift.shiftName);
   const dnis = Array.isArray(shift.responsibleDnis) ? uniq(shift.responsibleDnis) : [];
   const plates = Array.isArray(shift.vehiclePlates) ? uniq(shift.vehiclePlates) : [];
   const fleets = getFleetLabels(shift);
+
+  const nameByDni = fullNameByDni ?? new Map<string, string>();
 
   return (
     <div
@@ -315,14 +323,16 @@ function ShiftCard({
                 <table className="w-full text-sm">
                   <thead className="bg-slate-950/80">
                     <tr className="text-left text-[11px] tracking-wide text-slate-400 uppercase">
-                      <th className="px-3 py-2">DNI</th>
+                      <th className="px-3 py-2">DNI - Nombre</th>
                       <th className="px-3 py-2 text-right">Flota</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dnis.map((dni) => (
                       <tr key={dni} className="border-t border-slate-800">
-                        <td className="px-3 py-2 text-slate-100">{dni}</td>
+                        <td className="px-3 py-2 text-slate-100">
+                          {nameByDni.has(dni) ? `${dni} - ${nameByDni.get(dni)}` : dni}
+                        </td>
                         <td className="px-3 py-2 text-right text-[12px] text-slate-400">
                           {fleets[0] ?? "—"}
                         </td>
@@ -423,7 +433,6 @@ export default function TurnosPage() {
   const getTab = (map: Record<number, ShiftTab>, id: number) => map[id] ?? "RESP";
 
   // ✅ LIST BY DATE DETAIL (SIN any)
-  // Importante: no podemos condicionar hooks, así que pasamos params opcionales.
   const shiftsQuery = useShiftsByDateDetail({ companyId, date } as {
     companyId?: number;
     date?: string;
@@ -461,6 +470,41 @@ export default function TurnosPage() {
 
   const previewShifts = importedPreview ?? shifts;
   const previewMode = importedPreview ? "IMPORT" : "DAY";
+
+  // ===========================
+  // ✅ Resolver DNIs -> fullName
+  // ===========================
+  const allDnis = useMemo(() => {
+    const out: string[] = [];
+    for (const s of shifts) {
+      if (Array.isArray(s.responsibleDnis)) out.push(...s.responsibleDnis);
+    }
+    return uniq(out.map((x) => x.trim()).filter(Boolean));
+  }, [shifts]);
+
+  const dniQueries = useQueries({
+    queries: allDnis.map((dni) => ({
+      queryKey: ["user", "by-dni", companyId, dni],
+      enabled: !!companyId && !!dni,
+      queryFn: () =>
+        userService.getUserByDni({
+          companyId: companyId as number,
+          dni,
+        }),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  const fullNameByDni = useMemo(() => {
+    const map = new Map<string, string>();
+    for (let i = 0; i < allDnis.length; i++) {
+      const dni = allDnis[i];
+      const q = dniQueries[i];
+      const fullName = (q?.data as GroupUserSummary | undefined)?.fullName?.trim();
+      if (fullName) map.set(dni, fullName);
+    }
+    return map;
+  }, [allDnis, dniQueries]);
 
   const handlePickFile = () => inputRef.current?.click();
 
@@ -781,6 +825,7 @@ export default function TurnosPage() {
                     onTab={(next) =>
                       setPreviewTabs((prev) => ({ ...prev, [s.id]: next }))
                     }
+                    fullNameByDni={fullNameByDni}
                   />
                 ))}
               </div>
@@ -957,6 +1002,7 @@ export default function TurnosPage() {
                   variant="full"
                   tab={(fullTabs[s.id] ?? "RESP") as ShiftTab}
                   onTab={(next) => setFullTabs((prev) => ({ ...prev, [s.id]: next }))}
+                  fullNameByDni={fullNameByDni}
                 />
               ))}
             </div>

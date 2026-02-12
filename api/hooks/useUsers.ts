@@ -127,3 +127,36 @@ export const useDeleteUser = () => {
     },
   });
 };
+
+export const useUserByDni = (params?: { companyId?: number; dni?: string }) => {
+  const companyId = params?.companyId;
+  const dni = params?.dni?.trim();
+
+  return useQuery<GroupUserSummary, Error>({
+    queryKey: ["user", "by-dni", companyId, dni],
+    enabled: !!companyId && !!dni,
+    queryFn: () =>
+      userService.getUserByDni({
+        companyId: companyId as number,
+        dni: dni as string,
+      }),
+  });
+};
+
+export const useFirstUserByFullName = (params?: {
+  companyId?: number;
+  fullName?: string;
+}) => {
+  const companyId = params?.companyId;
+  const fullName = params?.fullName?.trim();
+
+  return useQuery<GroupUserSummary, Error>({
+    queryKey: ["user", "by-fullname", companyId, fullName],
+    enabled: !!companyId && !!fullName,
+    queryFn: () =>
+      userService.getFirstUserByFullName({
+        companyId: companyId as number,
+        fullName: fullName as string,
+      }),
+  });
+};
