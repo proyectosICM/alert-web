@@ -245,6 +245,8 @@ export default function AppHome() {
   const yearlyHeaderLabel = `Año ${statsYear}`;
   const yearlySubLabel = fleetId ? `Flota #${fleetId}` : "Todas las flotas";
 
+  console.log(fleetId);
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col space-y-4 pb-16 md:pb-4">
       {/* Header */}
